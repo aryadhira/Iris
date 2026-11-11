@@ -1,0 +1,612 @@
+package httpapi
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/labstack/echo/v4"
+
+	"github.com/aryadhira/iris/internal/auth"
+	"github.com/aryadhira/iris/internal/hermes"
+	"github.com/aryadhira/iris/internal/store"
+)
+
+const testPassphrase = "correct horse battery staple"
+
+type fakeStore struct {
+	mu sync.Mutex
+
+	rooms    map[uuid.UUID]store.Room
+	messages []store.Message
+	sessions map[string]store.AuthSession
+
+	createRoomCalls int
+	lastRoomArg     store.CreateRoomParams
+	failCreateRoom  error
+}
+
+func newFakeStore() *fakeStore {
+	return &fakeStore{
+		rooms:    map[uuid.UUID]store.Room{},
+		sessions: map[string]store.AuthSession{},
+	}
+}
+
+func (f *fakeStore) CreateRoom(_ context.Context, arg store.CreateRoomParams) (store.Room, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.createRoomCalls++
+	f.lastRoomArg = arg
+	if f.failCreateRoom != nil {
+		return store.Room{}, f.failCreateRoom
+	}
+	row := store.Room{
+		ID:              arg.ID,
+		Name:            arg.Name,
+		Topic:           arg.Topic,
+		HermesSessionID: arg.HermesSessionID,
+		CreatedAt:       time.Now(),
+	}
+	f.rooms[row.ID] = row
+	return row, nil
+}
+
+func (f *fakeStore) ListRooms(context.Context) ([]store.Room, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]store.Room, 0, len(f.rooms))
+	for _, row := range f.rooms {
+		out = append(out, row)
+	}
+	return out, nil
+}
+
+func (f *fakeStore) GetRoom(_ context.Context, id uuid.UUID) (store.Room, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	row, ok := f.rooms[id]
+	if !ok {
+		return store.Room{}, pgx.ErrNoRows
+	}
+	return row, nil
+}
+
+func (f *fakeStore) ArchiveRoom(_ context.Context, id uuid.UUID) (store.Room, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	row, ok := f.rooms[id]
+	if !ok {
+		return store.Room{}, pgx.ErrNoRows
+	}
+	now := time.Now()
+	row.ArchivedAt = &now
+	f.rooms[id] = row
+	return row, nil
+}
+
+func (f *fakeStore) InsertMessage(_ context.Context, arg store.InsertMessageParams) (store.Message, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	row := store.Message{
+		ID:        arg.ID,
+		RoomID:    arg.RoomID,
+		Role:      arg.Role,
+		Body:      arg.Body,
+		RunID:     arg.RunID,
+		CreatedAt: time.Now(),
+	}
+	f.messages = append(f.messages, row)
+	return row, nil
+}
+
+func (f *fakeStore) ListMessages(_ context.Context, arg store.ListMessagesParams) ([]store.Message, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]store.Message, 0)
+	for i := len(f.messages) - 1; i >= 0; i-- {
+		row := f.messages[i]
+		if row.RoomID != arg.RoomID {
+			continue
+		}
+		if arg.Before != nil && !row.CreatedAt.Before(*arg.Before) {
+			continue
+		}
+		out = append(out, row)
+		if len(out) >= int(arg.RowLimit) {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) CreateAuthSession(_ context.Context, arg store.CreateAuthSessionParams) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sessions[arg.TokenHash] = store.AuthSession{
+		TokenHash: arg.TokenHash,
+		CreatedAt: time.Now(),
+		ExpiresAt: arg.ExpiresAt,
+		UserAgent: arg.UserAgent,
+	}
+	return nil
+}
+
+func (f *fakeStore) GetAuthSession(_ context.Context, tokenHash string) (store.AuthSession, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	row, ok := f.sessions[tokenHash]
+	if !ok || !row.ExpiresAt.After(time.Now()) {
+		return store.AuthSession{}, pgx.ErrNoRows
+	}
+	return row, nil
+}
+
+func (f *fakeStore) DeleteAuthSession(_ context.Context, tokenHash string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.sessions, tokenHash)
+	return nil
+}
+
+func (f *fakeStore) messagesFor(roomID uuid.UUID) []store.Message {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]store.Message, 0)
+	for _, row := range f.messages {
+		if row.RoomID == roomID {
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
+type fakeHermes struct {
+	mu sync.Mutex
+
+	createID    string
+	createErr   error
+	createCalls int
+
+	deleteCalls []string
+	deleteErr   error
+
+	events    []hermes.Event
+	streamErr error
+	onStream  func(ctx context.Context, emit func(hermes.Event) error) error
+}
+
+func (f *fakeHermes) CreateSession(context.Context, string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.createCalls++
+	if f.createErr != nil {
+		return "", f.createErr
+	}
+	return f.createID, nil
+}
+
+func (f *fakeHermes) DeleteSession(_ context.Context, sessionID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deleteCalls = append(f.deleteCalls, sessionID)
+	return f.deleteErr
+}
+
+func (f *fakeHermes) StreamChat(ctx context.Context, _ string, _ string, onEvent func(hermes.Event) error) error {
+	if f.onStream != nil {
+		return f.onStream(ctx, onEvent)
+	}
+	for _, ev := range f.events {
+		if err := onEvent(ev); err != nil {
+			return err
+		}
+	}
+	return f.streamErr
+}
+
+func newTestApp(t *testing.T, st *fakeStore, hm hermes.Client) *echo.Echo {
+	t.Helper()
+	logger := testLogger()
+	authService := auth.New(st, testPassphrase, false, logger)
+	return New(Options{
+		Store:   st,
+		Hermes:  hm,
+		Auth:    authService,
+		Logger:  logger,
+		Version: "test",
+	})
+}
+
+func testLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+func request(t *testing.T, e *echo.Echo, method, path string, body any, cookie *http.Cookie) *httptest.ResponseRecorder {
+	t.Helper()
+	var reader *strings.Reader
+	if body == nil {
+		reader = strings.NewReader("")
+	} else {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("marshal request: %v", err)
+		}
+		reader = strings.NewReader(string(raw))
+	}
+	req := httptest.NewRequest(method, path, reader)
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	if cookie != nil {
+		req.AddCookie(cookie)
+	}
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	return rec
+}
+
+func login(t *testing.T, e *echo.Echo) *http.Cookie {
+	t.Helper()
+	rec := request(t, e, http.MethodPost, "/api/auth/login", map[string]string{"passphrase": testPassphrase}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	cookies := rec.Result().Cookies()
+	for _, c := range cookies {
+		if c.Name == auth.CookieName {
+			return c
+		}
+	}
+	t.Fatalf("login did not set %s", auth.CookieName)
+	return nil
+}
+
+func createRoom(t *testing.T, e *echo.Echo, cookie *http.Cookie, hm *fakeHermes, st *fakeStore) store.Room {
+	t.Helper()
+	hm.createID = "api_test_room"
+	rec := request(t, e, http.MethodPost, "/api/rooms", map[string]string{"name": "Work", "topic": "ship"}, cookie)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create room status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if len(st.rooms) != 1 {
+		t.Fatalf("rooms stored = %d, want 1", len(st.rooms))
+	}
+	for _, row := range st.rooms {
+		return row
+	}
+	return store.Room{}
+}
+
+type sseEvent struct {
+	Name string
+	Data string
+}
+
+func parseSSE(t *testing.T, body string) []sseEvent {
+	t.Helper()
+	var out []sseEvent
+	var name string
+	var data []string
+	flush := func() {
+		if name == "" && len(data) == 0 {
+			return
+		}
+		out = append(out, sseEvent{Name: name, Data: strings.Join(data, "\n")})
+		name = ""
+		data = nil
+	}
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		switch {
+		case line == "":
+			flush()
+		case strings.HasPrefix(line, "event:"):
+			name = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+		case strings.HasPrefix(line, "data:"):
+			data = append(data, strings.TrimPrefix(strings.TrimPrefix(line, "data:"), " "))
+		}
+	}
+	flush()
+	return out
+}
+
+func TestLoginWrongPassphraseIs401(t *testing.T) {
+	st := newFakeStore()
+	e := newTestApp(t, st, &fakeHermes{})
+	rec := request(t, e, http.MethodPost, "/api/auth/login", map[string]string{"passphrase": "wrong"}, nil)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 (body %s)", rec.Code, rec.Body.String())
+	}
+	var body map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["error"] == "" {
+		t.Fatal("expected a human error message")
+	}
+	if len(rec.Result().Cookies()) != 0 {
+		t.Fatal("wrong passphrase must not set a cookie")
+	}
+}
+
+func TestLoginSetsHttpOnlyCookieAndProtectsRoutes(t *testing.T) {
+	st := newFakeStore()
+	e := newTestApp(t, st, &fakeHermes{})
+
+	rec := request(t, e, http.MethodPost, "/api/auth/login", map[string]string{"passphrase": testPassphrase}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var cookie *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == auth.CookieName {
+			cookie = c
+		}
+	}
+	if cookie == nil {
+		t.Fatal("login did not set iris_session")
+	}
+	if !cookie.HttpOnly {
+		t.Error("session cookie must be HttpOnly")
+	}
+	if cookie.SameSite != http.SameSiteLaxMode {
+		t.Errorf("SameSite = %v, want Lax", cookie.SameSite)
+	}
+
+	rec = request(t, e, http.MethodGet, "/api/rooms", nil, nil)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("protected route without cookie = %d, want 401", rec.Code)
+	}
+
+	rec = request(t, e, http.MethodGet, "/api/health", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("health without cookie = %d, want 200", rec.Code)
+	}
+	var health map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &health); err != nil {
+		t.Fatalf("decode health: %v", err)
+	}
+	if health["ok"] != true || health["version"] != "test" {
+		t.Fatalf("health = %v", health)
+	}
+
+	rec = request(t, e, http.MethodGet, "/api/auth/me", nil, cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("me with cookie = %d, want 200", rec.Code)
+	}
+
+	rec = request(t, e, http.MethodPost, "/api/auth/logout", nil, cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("logout = %d, want 200", rec.Code)
+	}
+	rec = request(t, e, http.MethodGet, "/api/rooms", nil, cookie)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("route after logout = %d, want 401", rec.Code)
+	}
+}
+
+func TestCreateRoomCreatesHermesSessionFirst(t *testing.T) {
+	st := newFakeStore()
+	hm := &fakeHermes{createID: "api_abc"}
+	e := newTestApp(t, st, hm)
+	cookie := login(t, e)
+
+	rec := request(t, e, http.MethodPost, "/api/rooms", map[string]string{"name": "Work", "topic": "ship"}, cookie)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if hm.createCalls != 1 {
+		t.Fatalf("CreateSession calls = %d, want 1", hm.createCalls)
+	}
+	if st.createRoomCalls != 1 {
+		t.Fatalf("CreateRoom calls = %d, want 1", st.createRoomCalls)
+	}
+	if st.lastRoomArg.HermesSessionID != "api_abc" {
+		t.Fatalf("stored hermes session = %q, want api_abc", st.lastRoomArg.HermesSessionID)
+	}
+}
+
+func TestCreateRoomHermesFailureLeavesNoRow(t *testing.T) {
+	st := newFakeStore()
+	hm := &fakeHermes{createErr: errors.New("connection refused")}
+	e := newTestApp(t, st, hm)
+	cookie := login(t, e)
+
+	rec := request(t, e, http.MethodPost, "/api/rooms", map[string]string{"name": "Work"}, cookie)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502 (body %s)", rec.Code, rec.Body.String())
+	}
+	if len(st.rooms) != 0 || st.createRoomCalls != 0 {
+		t.Fatalf("row was written after Hermes failed: rooms=%d calls=%d", len(st.rooms), st.createRoomCalls)
+	}
+	if !strings.Contains(rec.Body.String(), "No room was created") {
+		t.Fatalf("error copy is not human: %s", rec.Body.String())
+	}
+}
+
+func TestCreateRoomRowFailureCleansUpHermesSession(t *testing.T) {
+	st := newFakeStore()
+	st.failCreateRoom = errors.New("db is down")
+	hm := &fakeHermes{createID: "api_orphan"}
+	e := newTestApp(t, st, hm)
+	cookie := login(t, e)
+
+	rec := request(t, e, http.MethodPost, "/api/rooms", map[string]string{"name": "Work"}, cookie)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+	if len(hm.deleteCalls) != 1 || hm.deleteCalls[0] != "api_orphan" {
+		t.Fatalf("orphan cleanup = %v, want [api_orphan]", hm.deleteCalls)
+	}
+}
+
+func TestMessageStreamForwardsDeltasAndPersistsAssistant(t *testing.T) {
+	st := newFakeStore()
+	hm := &fakeHermes{createID: "api_stream"}
+	e := newTestApp(t, st, hm)
+	cookie := login(t, e)
+	room := createRoom(t, e, cookie, hm, st)
+
+	hm.events = []hermes.Event{
+		{Kind: "started", RunID: "run_1", MessageID: "msg_1"},
+		{Kind: "delta", Text: "Hel", RunID: "run_1", MessageID: "msg_1"},
+		{Kind: "tool", Name: "terminal", Status: "running", RunID: "run_1"},
+		{Kind: "delta", Text: "lo", RunID: "run_1", MessageID: "msg_1"},
+		{Kind: "done", Text: "Hello", RunID: "run_1", MessageID: "msg_1"},
+	}
+
+	rec := request(t, e, http.MethodPost, "/api/rooms/"+room.ID.String()+"/messages", map[string]string{"text": "hi"}, cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get(echo.HeaderContentType); !strings.HasPrefix(got, "text/event-stream") {
+		t.Fatalf("content-type = %q, want text/event-stream", got)
+	}
+
+	events := parseSSE(t, rec.Body.String())
+	var deltas []string
+	var sawTool, sawDone bool
+	for _, ev := range events {
+		switch ev.Name {
+		case "delta":
+			var payload struct{ Text string }
+			if err := json.Unmarshal([]byte(ev.Data), &payload); err != nil {
+				t.Fatalf("delta payload: %v", err)
+			}
+			deltas = append(deltas, payload.Text)
+		case "tool":
+			sawTool = true
+		case "done":
+			sawDone = true
+		}
+	}
+	if strings.Join(deltas, "") != "Hello" {
+		t.Fatalf("deltas = %v, want Hel then lo", deltas)
+	}
+	if !sawTool {
+		t.Error("tool event was not forwarded")
+	}
+	if !sawDone {
+		t.Error("done event was not forwarded")
+	}
+
+	var rows []store.Message
+	for _, row := range st.messagesFor(room.ID) {
+		if row.Role == "assistant" {
+			rows = append(rows, row)
+		}
+	}
+	if len(rows) != 1 {
+		t.Fatalf("assistant rows = %d, want 1", len(rows))
+	}
+	if rows[0].Body != "Hello" {
+		t.Fatalf("assistant body = %q, want Hello", rows[0].Body)
+	}
+	if rows[0].RunID == nil || *rows[0].RunID != "run_1" {
+		t.Fatalf("assistant run_id = %v, want run_1", rows[0].RunID)
+	}
+
+	userRows := 0
+	for _, row := range st.messagesFor(room.ID) {
+		if row.Role == "user" && row.Body == "hi" {
+			userRows++
+		}
+	}
+	if userRows != 1 {
+		t.Fatalf("user rows = %d, want 1", userRows)
+	}
+}
+
+func TestClientDisconnectDoesNotStopTheTurn(t *testing.T) {
+	st := newFakeStore()
+	hm := &fakeHermes{}
+	e := newTestApp(t, st, hm)
+	cookie := login(t, e)
+	room := createRoom(t, e, cookie, hm, st)
+
+	firstSent := make(chan struct{})
+	continueTurn := make(chan struct{})
+	hm.onStream = func(ctx context.Context, emit func(hermes.Event) error) error {
+		if err := emit(hermes.Event{Kind: "delta", Text: "part one ", RunID: "run_2"}); err != nil {
+			return err
+		}
+		close(firstSent)
+		<-continueTurn
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if err := emit(hermes.Event{Kind: "delta", Text: "part two", RunID: "run_2"}); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	reqCtx, cancelReq := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodPost, "/api/rooms/"+room.ID.String()+"/messages", strings.NewReader(`{"text":"long job"}`))
+	req = req.WithContext(reqCtx)
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		e.ServeHTTP(rec, req)
+		close(done)
+	}()
+
+	<-firstSent
+	cancelReq() // the phone went away
+	close(continueTurn)
+	<-done
+
+	rows := st.messagesFor(room.ID)
+	var assistant string
+	for _, row := range rows {
+		if row.Role == "assistant" {
+			assistant = row.Body
+		}
+	}
+	if assistant != "part one part two" {
+		t.Fatalf("assistant body after disconnect = %q, want the full turn", assistant)
+	}
+}
+
+func TestUnknownHermesEventIsForwardedNotFatal(t *testing.T) {
+	st := newFakeStore()
+	hm := &fakeHermes{}
+	e := newTestApp(t, st, hm)
+	cookie := login(t, e)
+	room := createRoom(t, e, cookie, hm, st)
+
+	hm.events = []hermes.Event{
+		{Kind: "unknown", OriginalKind: "future.event", Raw: []byte(`{"x":1}`)},
+		{Kind: "delta", Text: "still here"},
+	}
+
+	rec := request(t, e, http.MethodPost, "/api/rooms/"+room.ID.String()+"/messages", map[string]string{"text": "go"}, cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	events := parseSSE(t, rec.Body.String())
+	var sawUnknown bool
+	for _, ev := range events {
+		if ev.Name == "unknown" && strings.Contains(ev.Data, "future.event") {
+			sawUnknown = true
+		}
+	}
+	if !sawUnknown {
+		t.Fatalf("unknown event not forwarded: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "still here") {
+		t.Fatalf("turn stopped after unknown event: %s", rec.Body.String())
+	}
+}
