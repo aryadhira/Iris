@@ -1,0 +1,122 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/inter-tight';
+
+/* Brand tokens — BRAND.md. Flat colours; gradients only on the logo halo. */
+@theme {
+  --color-bg: #080321;
+  --color-bg-deep: #05031c;
+  --color-surface: #0e0729;
+  --color-line: #241a4d;
+  --color-violet: #5218df;
+  --color-orchid: #c675fe;
+  --color-blue: #2431df;
+  --color-ink: #f7f1ff;
+  --color-muted: #a99fd0;
+  --color-quiet: #6f66a0;
+
+  --font-sans:
+    'Inter Tight Variable', 'Inter Tight', ui-sans-serif, system-ui, -apple-system,
+    'Segoe UI', sans-serif;
+  --font-mono:
+    ui-monospace, 'SFMono-Regular', 'JetBrains Mono', 'Roboto Mono', Menlo, monospace;
+
+  --breakpoint-sidebar: 64rem;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  html,
+  body,
+  #app {
+    height: 100%;
+  }
+
+  body {
+    background-color: var(--color-bg);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+    overscroll-behavior-y: none;
+  }
+
+  ::selection {
+    background: var(--color-violet);
+    color: var(--color-ink);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-orchid);
+    outline-offset: 2px;
+  }
+
+  textarea,
+  input,
+  button {
+    font: inherit;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-line) transparent;
+  }
+}
+
+@layer components {
+  /* The composer sits above the home indicator on a phone. */
+  .safe-bottom {
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+  }
+
+  .safe-top {
+    padding-top: max(0.75rem, env(safe-area-inset-top));
+  }
+
+  .hairline {
+    border-color: var(--color-line);
+  }
+
+  .tap {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  .halo {
+    background: radial-gradient(
+      circle at center,
+      rgba(198, 117, 254, 0.42) 0%,
+      rgba(82, 24, 223, 0.22) 42%,
+      rgba(8, 3, 33, 0) 70%
+    );
+  }
+}
+
+@keyframes sheet-in {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.sheet-in {
+  animation: sheet-in 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

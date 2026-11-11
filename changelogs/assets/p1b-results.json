@@ -1,0 +1,442 @@
+{
+  "startedAt": "2026-11-11T18:47:20.067Z",
+  "viewports": {
+    "phone": {
+      "width": 390,
+      "height": 844,
+      "roomPath": "/r/7975ef0f-e349-4a5c-a1fb-2f88a6f331a0",
+      "elapsedMs": 13141,
+      "growingLengths": [
+        16,
+        30
+      ],
+      "finalReply": "Iris · 01.48\n\np1b-689ce3 siap.",
+      "afterReload": {
+        "path": "/r/7975ef0f-e349-4a5c-a1fb-2f88a6f331a0",
+        "users": 1,
+        "assistants": 1,
+        "userHits": 1,
+        "assistantHits": 1,
+        "lastAssistant": "Iris · 01.48\n\np1b-689ce3 siap."
+      }
+    },
+    "desktop": {
+      "width": 1440,
+      "height": 900,
+      "roomPath": "/r/5ac68df9-e139-4fc2-9794-50e3fea436e1",
+      "elapsedMs": 9284,
+      "growingLengths": [
+        16,
+        30
+      ],
+      "finalReply": "Iris · 01.48\n\np1b-6589f3 siap.",
+      "afterReload": {
+        "path": "/r/5ac68df9-e139-4fc2-9794-50e3fea436e1",
+        "users": 1,
+        "assistants": 1,
+        "userHits": 1,
+        "assistantHits": 1,
+        "lastAssistant": "Iris · 01.48\n\np1b-6589f3 siap."
+      }
+    }
+  },
+  "branding": {
+    "manifestStatus": 200,
+    "manifestIcons": [
+      "192x192:any",
+      "512x512:any",
+      "512x512:maskable"
+    ],
+    "faviconStatus": 200,
+    "mark16Status": 200,
+    "masterStatus": 200,
+    "fontFamily": "\"Inter Tight Variable\", \"Inter Tight\", ui-sans-serif, system-ui, -apple-system, \"Segoe UI\", sans-serif",
+    "fontLoaded": true,
+    "bodyBackground": "rgb(8, 3, 33)",
+    "faviconLinks": [
+      "/favicon.ico",
+      "/icons/mark-32.png",
+      "/icons/mark-16.png"
+    ],
+    "colorScheme": "dark"
+  },
+  "checks": [
+    {
+      "scope": "phone",
+      "name": "unauthenticated visit lands on /login",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "scope": "phone",
+      "name": "passphrase field starts focused",
+      "pass": true,
+      "detail": "activeElement=passphrase"
+    },
+    {
+      "scope": "phone",
+      "name": "login has no horizontal overflow",
+      "pass": true,
+      "detail": "scrollWidth=390 innerWidth=390"
+    },
+    {
+      "scope": "phone",
+      "name": "wrong passphrase shows a human line",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "scope": "phone",
+      "name": "wrong passphrase keeps the field focused",
+      "pass": true,
+      "detail": "activeElement=passphrase"
+    },
+    {
+      "scope": "phone",
+      "name": "login with the real passphrase reaches the rooms list",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "scope": "phone",
+      "name": "rooms list has no horizontal overflow",
+      "pass": true,
+      "detail": "scrollWidth=390"
+    },
+    {
+      "scope": "phone",
+      "name": "room sheet opens from the left inside the viewport",
+      "pass": true,
+      "detail": "left=0 right=320 width=320"
+    },
+    {
+      "scope": "phone",
+      "name": "new-room dialog has no horizontal overflow",
+      "pass": true,
+      "detail": "scrollWidth=390"
+    },
+    {
+      "scope": "phone",
+      "name": "room created through the UI",
+      "pass": true,
+      "detail": "/r/7975ef0f-e349-4a5c-a1fb-2f88a6f331a0"
+    },
+    {
+      "scope": "phone",
+      "name": "composer is inside the viewport (dvh, not vh)",
+      "pass": true,
+      "detail": "bottom=775 viewport=844"
+    },
+    {
+      "scope": "phone",
+      "name": "send control is at least 44px tall",
+      "pass": true,
+      "detail": "height=44"
+    },
+    {
+      "scope": "phone",
+      "name": "composer input is 16px (no iOS zoom)",
+      "pass": true,
+      "detail": "fontSize=16px"
+    },
+    {
+      "scope": "phone",
+      "name": "working state names the work and counts seconds",
+      "pass": true,
+      "detail": "\"Bekerja · 0 detik Menunggu Hermes menjawab…\""
+    },
+    {
+      "scope": "phone",
+      "name": "Stop is visible, disabled, and says it is not wired",
+      "pass": true,
+      "detail": "disabled=true title=\"Stop belum tersambung ke server. Tutup room ini untuk berhenti menonto\""
+    },
+    {
+      "scope": "phone",
+      "name": "composer is disabled while a turn runs",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "scope": "phone",
+      "name": "elapsed seconds actually tick",
+      "pass": true,
+      "detail": "read 1 detik"
+    },
+    {
+      "scope": "phone",
+      "name": "reply text grew in place while streaming",
+      "pass": true,
+      "detail": "lengths seen: 16,30 (2 distinct)"
+    },
+    {
+      "scope": "phone",
+      "name": "turn completed",
+      "pass": true,
+      "detail": "13.1 s"
+    },
+    {
+      "scope": "phone",
+      "name": "assistant reply is on screen",
+      "pass": true,
+      "detail": "30 chars"
+    },
+    {
+      "scope": "phone",
+      "name": "reply carries this turn’s marker",
+      "pass": true,
+      "detail": "\"Iris · 01.48 p1b-689ce3 siap.\""
+    },
+    {
+      "scope": "phone",
+      "name": "room view has no horizontal overflow",
+      "pass": true,
+      "detail": "scrollWidth=390 innerWidth=390"
+    },
+    {
+      "scope": "phone",
+      "name": "reload keeps the room open",
+      "pass": true,
+      "detail": "/r/7975ef0f-e349-4a5c-a1fb-2f88a6f331a0"
+    },
+    {
+      "scope": "phone",
+      "name": "reload still shows the reply",
+      "pass": true,
+      "detail": "assistant nodes=1, with marker=1"
+    },
+    {
+      "scope": "phone",
+      "name": "the sent message is stored exactly once",
+      "pass": true,
+      "detail": "user nodes=1, with text=1"
+    },
+    {
+      "scope": "phone",
+      "name": "reloaded room has no horizontal overflow",
+      "pass": true,
+      "detail": "scrollWidth=390"
+    },
+    {
+      "scope": "phone",
+      "name": "archive asks for a second step",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "scope": "phone",
+      "name": "cancelling archive keeps the room",
+      "pass": true,
+      "detail": "1 room(s) in the sheet"
+    },
+    {
+      "scope": "phone",
+      "name": "archived room opens read-only with a reason",
+      "pass": true,
+      "detail": "disabled=true note=\"Room ini diarsipkan. Kamu bisa membaca semua pesan, tapi tidak bisa me\""
+    },
+    {
+      "scope": "branding",
+      "name": "manifest is served",
+      "pass": true,
+      "detail": "status=200"
+    },
+    {
+      "scope": "branding",
+      "name": "manifest lists 192, 512 and a maskable icon",
+      "pass": true,
+      "detail": "[\"192x192:any\",\"512x512:any\",\"512x512:maskable\"]"
+    },
+    {
+      "scope": "branding",
+      "name": "tab uses the reduced 16/32 mark, not the full master",
+      "pass": true,
+      "detail": "favicon=200 mark16=200 links=/favicon.ico,/icons/mark-32.png,/icons/mark-16.png"
+    },
+    {
+      "scope": "branding",
+      "name": "master icon is served",
+      "pass": true,
+      "detail": "status=200"
+    },
+    {
+      "scope": "branding",
+      "name": "Inter Tight is the loaded face",
+      "pass": true,
+      "detail": "\"Inter Tight Variable\", \"Inter Tight\", ui-sans-serif, system-ui, -apple-system, \"Segoe UI\", sans-serif"
+    },
+    {
+      "scope": "branding",
+      "name": "body uses the brand bg #080321",
+      "pass": true,
+      "detail": "rgb(8, 3, 33)"
+    },
+    {
+      "scope": "branding",
+      "name": "dark color-scheme is declared",
+      "pass": true,
+      "detail": "dark"
+    },
+    {
+      "scope": "desktop",
+      "name": "unauthenticated visit lands on /login",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "scope": "desktop",
+      "name": "passphrase field starts focused",
+      "pass": true,
+      "detail": "activeElement=passphrase"
+    },
+    {
+      "scope": "desktop",
+      "name": "login has no horizontal overflow",
+      "pass": true,
+      "detail": "scrollWidth=1440 innerWidth=1440"
+    },
+    {
+      "scope": "desktop",
+      "name": "login with the real passphrase reaches the rooms list",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "scope": "desktop",
+      "name": "rooms list has no horizontal overflow",
+      "pass": true,
+      "detail": "scrollWidth=1440"
+    },
+    {
+      "scope": "desktop",
+      "name": "new-room dialog has no horizontal overflow",
+      "pass": true,
+      "detail": "scrollWidth=1440"
+    },
+    {
+      "scope": "desktop",
+      "name": "room created through the UI",
+      "pass": true,
+      "detail": "/r/5ac68df9-e139-4fc2-9794-50e3fea436e1"
+    },
+    {
+      "scope": "desktop",
+      "name": "composer is inside the viewport (dvh, not vh)",
+      "pass": true,
+      "detail": "bottom=831 viewport=900"
+    },
+    {
+      "scope": "desktop",
+      "name": "send control is at least 44px tall",
+      "pass": true,
+      "detail": "height=44"
+    },
+    {
+      "scope": "desktop",
+      "name": "composer input keeps body scale",
+      "pass": true,
+      "detail": "fontSize=14px"
+    },
+    {
+      "scope": "desktop",
+      "name": "working state names the work and counts seconds",
+      "pass": true,
+      "detail": "\"Bekerja · 0 detik Menunggu Hermes menjawab…\""
+    },
+    {
+      "scope": "desktop",
+      "name": "Stop is visible, disabled, and says it is not wired",
+      "pass": true,
+      "detail": "disabled=true title=\"Stop belum tersambung ke server. Tutup room ini untuk berhenti menonto\""
+    },
+    {
+      "scope": "desktop",
+      "name": "composer is disabled while a turn runs",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "scope": "desktop",
+      "name": "elapsed seconds actually tick",
+      "pass": true,
+      "detail": "read 1 detik"
+    },
+    {
+      "scope": "desktop",
+      "name": "reply text grew in place while streaming",
+      "pass": true,
+      "detail": "lengths seen: 16,30 (2 distinct)"
+    },
+    {
+      "scope": "desktop",
+      "name": "turn completed",
+      "pass": true,
+      "detail": "9.3 s"
+    },
+    {
+      "scope": "desktop",
+      "name": "assistant reply is on screen",
+      "pass": true,
+      "detail": "30 chars"
+    },
+    {
+      "scope": "desktop",
+      "name": "reply carries this turn’s marker",
+      "pass": true,
+      "detail": "\"Iris · 01.48 p1b-6589f3 siap.\""
+    },
+    {
+      "scope": "desktop",
+      "name": "room view has no horizontal overflow",
+      "pass": true,
+      "detail": "scrollWidth=1440 innerWidth=1440"
+    },
+    {
+      "scope": "desktop",
+      "name": "reload keeps the room open",
+      "pass": true,
+      "detail": "/r/5ac68df9-e139-4fc2-9794-50e3fea436e1"
+    },
+    {
+      "scope": "desktop",
+      "name": "reload still shows the reply",
+      "pass": true,
+      "detail": "assistant nodes=1, with marker=1"
+    },
+    {
+      "scope": "desktop",
+      "name": "the sent message is stored exactly once",
+      "pass": true,
+      "detail": "user nodes=1, with text=1"
+    },
+    {
+      "scope": "desktop",
+      "name": "reloaded room has no horizontal overflow",
+      "pass": true,
+      "detail": "scrollWidth=1440"
+    },
+    {
+      "scope": "browser",
+      "name": "no unexpected console errors",
+      "pass": true,
+      "detail": "3 expected 401 probe(s) before login"
+    }
+  ],
+  "finishedAt": "2026-11-11T18:48:16.567Z",
+  "failed": [],
+  "screenshots": [
+    "/home/aryadhira/Documents/projects/iris/changelogs/assets/p1b-phone-login.png",
+    "/home/aryadhira/Documents/projects/iris/changelogs/assets/p1b-phone-login-error.png",
+    "/home/aryadhira/Documents/projects/iris/changelogs/assets/p1b-phone-rooms-empty.png",
+    "/home/aryadhira/Documents/projects/iris/changelogs/assets/p1b-phone-sheet.png",
+    "/home/aryadhira/Documents/projects/iris/changelogs/assets/p1b-phone-room-streaming.png",
+    "/home/aryadhira/Documents/projects/iris/changelogs/assets/p1b-phone-room.png",
+    "/home/aryadhira/Documents/projects/iris/changelogs/assets/p1b-phone-archive-confirm.png",
+    "/home/aryadhira/Documents/projects/iris/changelogs/assets/p1b-phone-sheet-rooms.png",
+    "/home/aryadhira/Documents/projects/iris/changelogs/assets/p1b-phone-archived-room.png",
+    "/home/aryadhira/Documents/projects/iris/changelogs/assets/p1b-desktop-login.png",
+    "/home/aryadhira/Documents/projects/iris/changelogs/assets/p1b-desktop-room-streaming.png",
+    "/home/aryadhira/Documents/projects/iris/changelogs/assets/p1b-desktop-room.png",
+    "/home/aryadhira/Documents/projects/iris/changelogs/assets/p1b-desktop-rooms.png"
+  ]
+}
