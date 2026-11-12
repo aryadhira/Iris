@@ -15,6 +15,7 @@ const (
 	DefaultHermesKeyFile = "~/.config/iris-api-key"
 	DefaultDataDir       = "~/iris-data"
 	DefaultVoiceURL      = "http://127.0.0.1:3310"
+	DefaultWebDir        = "web/dist"
 )
 
 // Config is the complete runtime configuration. Secrets are held in memory only
@@ -29,6 +30,9 @@ type Config struct {
 	Passphrase    string
 	CookieSecure  bool
 	DataDir       string
+	// WebDir is the built SPA irisd serves. It is deliberately optional: a
+	// missing build is a broken UI, never a broken API.
+	WebDir string
 }
 
 // Load reads IRIS_* variables, validates them, and refuses clearly when a
@@ -61,6 +65,12 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("IRIS_DATA_DIR is not a usable path: %w", err)
 	}
 	cfg.DataDir = dataDir
+
+	webDir, err := ExpandHome(envOr("IRIS_WEB_DIR", DefaultWebDir))
+	if err != nil {
+		return nil, fmt.Errorf("IRIS_WEB_DIR is not a usable path: %w", err)
+	}
+	cfg.WebDir = webDir
 
 	keyPath, err := ExpandHome(cfg.HermesKeyFile)
 	if err != nil {

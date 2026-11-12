@@ -1,4 +1,5 @@
-import type { Continuation, FileAttachment, Room, RoomFile, StoredMessage } from './types'
+import type { Continuation, FileAttachment, Room, RoomFile, SearchResult, StoredMessage } from './types'
+import { filenameFromDisposition } from './files'
 
 export class ApiError extends Error {
   readonly status: number
@@ -122,6 +123,24 @@ export const api = {
       `/api/rooms/${encodeURIComponent(roomId)}/files`,
     )
     return body.files ?? []
+  },
+
+  async search(query: string, limit = 20): Promise<SearchResult[]> {
+    const params = new URLSearchParams({ q: query, limit: String(limit) })
+    const body = await request<{ results: SearchResult[] }>(`/api/search?${params.toString()}`)
+    return body.results ?? []
+  },
+
+  /** The transcript as a markdown file. The caller owns the download. */
+  async exportRoom(roomId: string): Promise<{ blob: Blob; filename: string }> {
+    const response = await fetch(`/api/rooms/${encodeURIComponent(roomId)}/export.md`, {
+      credentials: 'same-origin',
+    })
+    if (!response.ok) throw new ApiError(await readError(response), response.status)
+    return {
+      blob: await response.blob(),
+      filename: filenameFromDisposition(response.headers.get('content-disposition')),
+    }
   },
 
   async getContinuation(roomId: string): Promise<Continuation | null> {

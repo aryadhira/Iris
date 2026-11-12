@@ -11,6 +11,12 @@ sql:
         sql_package: "pgx/v5"
         emit_empty_slices: true
         overrides:
+          # pgx can read the generated tsvector as text into []byte; interface{}
+          # would fail with "cannot scan unknown type (OID 3614)".
+          - column: "messages.search_vector"
+            go_type:
+              type: "byte"
+              slice: true
           - db_type: "uuid"
             go_type: "github.com/google/uuid.UUID"
           - db_type: "uuid"

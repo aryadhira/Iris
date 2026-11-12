@@ -1,0 +1,96 @@
+{
+  "startedAt": "2026-11-12T03:42:14.719Z",
+  "roomId": "24cdeb36-006f-4bfd-a814-905d73ccc97f",
+  "checks": [
+    {
+      "scope": "phone",
+      "name": "signed in from the served SPA",
+      "pass": true,
+      "detail": "390x844"
+    },
+    {
+      "scope": "phone",
+      "name": "unseen word shows an honest empty state",
+      "pass": true,
+      "detail": "Tidak ada pesan yang cocok dengan “zzzunseentermzzz”."
+    },
+    {
+      "scope": "phone",
+      "name": "search from the rooms panel finds the message",
+      "pass": true,
+      "detail": "2 result(s), 2 highlight(s)"
+    },
+    {
+      "scope": "phone",
+      "name": "clicking a result deep-links to that message",
+      "pass": true,
+      "detail": "message b45aa1d3-6b78-4f8d-9adb-1056cbb89953, highlighted=true, textHasToken=true"
+    },
+    {
+      "scope": "phone",
+      "name": "export downloads a markdown transcript with the message and attachment",
+      "pass": true,
+      "detail": "p5-cari-dan-ekspor-2026-11-12.md, 508 bytes"
+    },
+    {
+      "scope": "phone",
+      "name": "no horizontal overflow after search and export",
+      "pass": true,
+      "detail": "scrollWidth=390 clientWidth=390"
+    },
+    {
+      "scope": "desktop",
+      "name": "signed in from the served SPA",
+      "pass": true,
+      "detail": "1440x900"
+    },
+    {
+      "scope": "desktop",
+      "name": "unseen word shows an honest empty state",
+      "pass": true,
+      "detail": "Tidak ada pesan yang cocok dengan “zzzunseentermzzz”."
+    },
+    {
+      "scope": "desktop",
+      "name": "search from the rooms panel finds the message",
+      "pass": true,
+      "detail": "2 result(s), 2 highlight(s)"
+    },
+    {
+      "scope": "desktop",
+      "name": "clicking a result deep-links to that message",
+      "pass": true,
+      "detail": "message b45aa1d3-6b78-4f8d-9adb-1056cbb89953, highlighted=true, textHasToken=true"
+    },
+    {
+      "scope": "desktop",
+      "name": "export downloads a markdown transcript with the message and attachment",
+      "pass": true,
+      "detail": "p5-cari-dan-ekspor-2026-11-12.md, 508 bytes"
+    },
+    {
+      "scope": "desktop",
+      "name": "no horizontal overflow after search and export",
+      "pass": true,
+      "detail": "scrollWidth=1440 clientWidth=1440"
+    }
+  ],
+  "phone": {
+    "file": "p5-cari-dan-ekspor-2026-11-12.md",
+    "bytes": 508,
+    "viewport": "390x844"
+  },
+  "desktop": {
+    "file": "p5-cari-dan-ekspor-2026-11-12.md",
+    "bytes": 508,
+    "viewport": "1440x900"
+  },
+  "finishedAt": "2026-11-12T03:42:44.328Z",
+  "failed": [],
+  "screenshots": [
+    "/home/aryadhira/Documents/projects/iris/changelogs/assets/p5-phone-search.png",
+    "/home/aryadhira/Documents/projects/iris/changelogs/assets/p5-phone-room.png",
+    "/home/aryadhira/Documents/projects/iris/changelogs/assets/p5-desktop-search.png",
+    "/home/aryadhira/Documents/projects/iris/changelogs/assets/p5-desktop-room.png"
+  ]
+}

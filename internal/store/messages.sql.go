@@ -13,7 +13,7 @@ import (
 )
 
 const getLatestAssistantMessage = `-- name: GetLatestAssistantMessage :one
-SELECT id, room_id, role, body, run_id, created_at, meta FROM messages
+SELECT id, room_id, role, body, run_id, created_at, meta, search_vector FROM messages
 WHERE room_id = $1
   AND role = 'assistant'
 ORDER BY created_at DESC, id DESC
@@ -31,12 +31,13 @@ func (q *Queries) GetLatestAssistantMessage(ctx context.Context, roomID uuid.UUI
 		&i.RunID,
 		&i.CreatedAt,
 		&i.Meta,
+		&i.SearchVector,
 	)
 	return i, err
 }
 
 const getMessage = `-- name: GetMessage :one
-SELECT id, room_id, role, body, run_id, created_at, meta FROM messages
+SELECT id, room_id, role, body, run_id, created_at, meta, search_vector FROM messages
 WHERE id = $1
 `
 
@@ -51,14 +52,16 @@ func (q *Queries) GetMessage(ctx context.Context, id uuid.UUID) (Message, error)
 		&i.RunID,
 		&i.CreatedAt,
 		&i.Meta,
+		&i.SearchVector,
 	)
 	return i, err
 }
 
 const insertMessage = `-- name: InsertMessage :one
+
 INSERT INTO messages (id, room_id, role, body, run_id, meta)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, room_id, role, body, run_id, created_at, meta
+RETURNING id, room_id, role, body, run_id, created_at, meta, search_vector
 `
 
 type InsertMessageParams struct {
@@ -70,6 +73,8 @@ type InsertMessageParams struct {
 	Meta   []byte
 }
 
+// Messages mirror the table shape. The generated search vector is only used
+// by SearchMessages; it is never part of an API response.
 func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (Message, error) {
 	row := q.db.QueryRow(ctx, insertMessage,
 		arg.ID,
@@ -88,12 +93,48 @@ func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (M
 		&i.RunID,
 		&i.CreatedAt,
 		&i.Meta,
+		&i.SearchVector,
 	)
 	return i, err
 }
 
+const listAllMessages = `-- name: ListAllMessages :many
+SELECT id, room_id, role, body, run_id, created_at, meta, search_vector FROM messages
+WHERE room_id = $1
+ORDER BY created_at ASC, id ASC
+`
+
+func (q *Queries) ListAllMessages(ctx context.Context, roomID uuid.UUID) ([]Message, error) {
+	rows, err := q.db.Query(ctx, listAllMessages, roomID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Message{}
+	for rows.Next() {
+		var i Message
+		if err := rows.Scan(
+			&i.ID,
+			&i.RoomID,
+			&i.Role,
+			&i.Body,
+			&i.RunID,
+			&i.CreatedAt,
+			&i.Meta,
+			&i.SearchVector,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listMessages = `-- name: ListMessages :many
-SELECT id, room_id, role, body, run_id, created_at, meta FROM messages
+SELECT id, room_id, role, body, run_id, created_at, meta, search_vector FROM messages
 WHERE room_id = $1
   AND created_at < COALESCE($2::timestamptz, 'infinity'::timestamptz)
 ORDER BY created_at DESC, id DESC
@@ -123,6 +164,70 @@ func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]M
 			&i.RunID,
 			&i.CreatedAt,
 			&i.Meta,
+			&i.SearchVector,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const searchMessages = `-- name: SearchMessages :many
+SELECT
+    m.id,
+    m.room_id,
+    r.name AS room_name,
+    m.role,
+    m.created_at,
+    ts_headline(
+        'indonesian'::regconfig,
+        m.body,
+        plainto_tsquery('indonesian'::regconfig, $1::text),
+        'StartSel=<mark>, StopSel=</mark>, MaxWords=28, MinWords=6, MaxFragments=2'
+    ) AS snippet
+FROM messages m
+JOIN rooms r ON r.id = m.room_id
+WHERE m.search_vector @@ plainto_tsquery('indonesian'::regconfig, $1::text)
+ORDER BY m.created_at DESC, m.id DESC
+LIMIT $2::int
+`
+
+type SearchMessagesParams struct {
+	Query    string
+	RowLimit int32
+}
+
+type SearchMessagesRow struct {
+	ID        uuid.UUID
+	RoomID    uuid.UUID
+	RoomName  string
+	Role      string
+	CreatedAt time.Time
+	Snippet   []byte
+}
+
+// ts_headline highlights the match without trusting message HTML: the browser
+// escapes the text and only restores the <mark> tags.
+func (q *Queries) SearchMessages(ctx context.Context, arg SearchMessagesParams) ([]SearchMessagesRow, error) {
+	rows, err := q.db.Query(ctx, searchMessages, arg.Query, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SearchMessagesRow{}
+	for rows.Next() {
+		var i SearchMessagesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.RoomID,
+			&i.RoomName,
+			&i.Role,
+			&i.CreatedAt,
+			&i.Snippet,
 		); err != nil {
 			return nil, err
 		}

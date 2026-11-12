@@ -75,6 +75,7 @@ func run() error {
 		Logger:           logger,
 		Version:          version,
 		DataDir:          cfg.DataDir,
+		WebDir:           cfg.WebDir,
 		RunContinuations: true,
 	})
 

@@ -13,11 +13,13 @@ import {
 import { markSignedOut } from '../stores/auth'
 import { closeRoomSheet, openNewRoom } from '../stores/ui'
 import BrandMark from './BrandMark.vue'
+import RoomSearch from './RoomSearch.vue'
 
 const route = useRoute()
 const router = useRouter()
 const state = roomsState()
 
+const searching = ref(false)
 const confirmingId = ref<string | null>(null)
 const archivingId = ref<string | null>(null)
 const archiveError = ref('')
@@ -88,7 +90,9 @@ onMounted(() => {
       </button>
     </div>
 
-    <div class="min-h-0 flex-1 overflow-y-auto px-2 pb-3" data-testid="room-list">
+    <RoomSearch @searching="searching = $event" />
+
+    <div v-if="!searching" class="min-h-0 flex-1 overflow-y-auto px-2 pb-3" data-testid="room-list">
       <p v-if="state.loading && !state.loaded" class="px-2 py-3 text-[13px] text-quiet">
         Memuat room…
       </p>

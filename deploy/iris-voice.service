@@ -1,0 +1,19 @@
+[Unit]
+Description=Iris — voice sidecar (STT + summary TTS, loopback only)
+Documentation=file://%h/Documents/projects/iris/voice/README.md
+After=iris.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Documents/projects/iris
+EnvironmentFile=%h/.config/iris/env
+ExecStart=%h/Documents/projects/voice-hud/bridge/.venv/bin/python %h/Documents/projects/iris/voice/server.py
+Restart=always
+RestartSec=2
+KillSignal=SIGTERM
+TimeoutStopSec=15
+UMask=0077
+
+[Install]
+WantedBy=default.target

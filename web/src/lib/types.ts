@@ -45,6 +45,15 @@ export interface Continuation {
   deadline: string
 }
 
+export interface SearchResult {
+  roomId: string
+  roomName: string
+  messageId: string
+  role: string
+  createdAt: string
+  snippet: string
+}
+
 /** A row exactly as irisd returns it. */
 export interface StoredMessage {
   id: string

@@ -222,6 +222,51 @@ func (f *fakeStore) ListMessages(_ context.Context, arg store.ListMessagesParams
 	return out, nil
 }
 
+func (f *fakeStore) ListAllMessages(_ context.Context, roomID uuid.UUID) ([]store.Message, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]store.Message, 0)
+	for _, row := range f.messages {
+		if row.RoomID == roomID {
+			out = append(out, row)
+		}
+	}
+	return out, nil
+}
+
+// SearchMessages mirrors the real query closely enough for handler tests:
+// case-insensitive substring, newest first, with the match wrapped in <mark>.
+func (f *fakeStore) SearchMessages(_ context.Context, arg store.SearchMessagesParams) ([]store.SearchMessagesRow, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	needle := strings.ToLower(strings.TrimSpace(arg.Query))
+	out := make([]store.SearchMessagesRow, 0)
+	for i := len(f.messages) - 1; i >= 0 && len(out) < int(arg.RowLimit); i-- {
+		row := f.messages[i]
+		lower := strings.ToLower(row.Body)
+		index := strings.Index(lower, needle)
+		if needle == "" || index < 0 {
+			continue
+		}
+		snippet := row.Body[max(0, index-40):index] + "<mark>" +
+			row.Body[index:index+len(needle)] + "</mark>" +
+			row.Body[index+len(needle):min(len(row.Body), index+len(needle)+40)]
+		roomName := ""
+		if room, ok := f.rooms[row.RoomID]; ok {
+			roomName = room.Name
+		}
+		out = append(out, store.SearchMessagesRow{
+			ID:        row.ID,
+			RoomID:    row.RoomID,
+			RoomName:  roomName,
+			Role:      row.Role,
+			CreatedAt: row.CreatedAt,
+			Snippet:   []byte(snippet),
+		})
+	}
+	return out, nil
+}
+
 func (f *fakeStore) GetMessage(_ context.Context, id uuid.UUID) (store.Message, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -512,6 +557,7 @@ func newTestApp(t *testing.T, st *fakeStore, hm hermes.Client) *echo.Echo {
 		Logger:  logger,
 		Version: "test",
 		DataDir: t.TempDir(),
+		WebDir:  t.TempDir(),
 	})
 }
 

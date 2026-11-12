@@ -56,6 +56,37 @@ export function isImage(file: Pick<FileAttachment, 'mime'>): boolean {
   return file.mime.startsWith('image/')
 }
 
+/** Where the server asked the browser to save a download, with a safe default. */
+export function filenameFromDisposition(header: string | null): string {
+  if (!header) return 'transkrip-iris.md'
+  const extended = /filename\*=utf-8''([^;]+)/i.exec(header)
+  if (extended?.[1]) {
+    try {
+      return decodeURIComponent(extended[1].trim())
+    } catch {
+      // fall through to the plain form
+    }
+  }
+  const quoted = /filename="([^"]*)"/i.exec(header)
+  if (quoted?.[1]) return quoted[1]
+  const plain = /filename=([^;]+)/i.exec(header)
+  if (plain?.[1]) return plain[1].trim()
+  return 'transkrip-iris.md'
+}
+
+/** One click, no navigation; the object URL is released after the click. */
+export function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.rel = 'noopener'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
 export interface ArtifactCardModel {
   kind: FileKind
   title: string

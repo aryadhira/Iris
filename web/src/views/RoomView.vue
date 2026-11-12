@@ -1,7 +1,15 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { PhArrowLeft, PhFiles, PhList, PhSpeakerHigh, PhSpeakerSlash } from '@phosphor-icons/vue'
+import {
+  PhArrowLeft,
+  PhDotsThreeVertical,
+  PhDownloadSimple,
+  PhFiles,
+  PhList,
+  PhSpeakerHigh,
+  PhSpeakerSlash,
+} from '@phosphor-icons/vue'
 import BrandMark from '../components/BrandMark.vue'
 import Composer from '../components/Composer.vue'
 import ContinuationLine from '../components/ContinuationLine.vue'
@@ -11,6 +19,7 @@ import MessageBubble from '../components/MessageBubble.vue'
 import WorkingLine from '../components/WorkingLine.vue'
 import { ApiError, api } from '../lib/api'
 import { humanizeServerError } from '../lib/errors'
+import { downloadBlob } from '../lib/files'
 import { roomState } from '../lib/timeline'
 import type { ChatMessage, Room, TurnPhase } from '../lib/types'
 import { createAttachmentStore, type AttachmentStore } from '../stores/attachments'
@@ -30,6 +39,11 @@ const libraryOpen = ref(false)
 const dragging = ref(false)
 const notFound = ref(false)
 const openError = ref('')
+const menuOpen = ref(false)
+const exporting = ref(false)
+const exportError = ref('')
+const highlightedId = ref('')
+let highlightTimer: number | undefined
 
 const speaker = createSpeakerStore()
 const voice = createVoiceStore(
@@ -202,8 +216,15 @@ async function openRoom(id: string): Promise<void> {
         .map((message) => message.id),
     )
     readyForAutoSpeak = true
-    await nextTick()
-    scrollToBottom()
+    const deepLink = typeof route.query.m === 'string' ? route.query.m : ''
+    if (deepLink !== '') {
+      // A search result opens the room at that message, not at the bottom.
+      nearBottom.value = false
+      await scrollToMessage(deepLink)
+    } else {
+      await nextTick()
+      scrollToBottom()
+    }
     document.title = `${found.name} — Iris`
   } catch (error) {
     if (error instanceof ApiError && error.status === 404) {
@@ -220,6 +241,37 @@ async function openRoom(id: string): Promise<void> {
       error instanceof ApiError
         ? humanizeServerError(error.message)
         : 'Iris tidak bisa membuka room ini. Periksa koneksi lalu coba lagi.'
+  }
+}
+
+async function scrollToMessage(id: string): Promise<void> {
+  await nextTick()
+  if (!/^[0-9a-fA-F-]{36}$/.test(id)) return
+  const element = scroller.value?.querySelector(`[data-message-id="${id}"]`)
+  if (!(element instanceof HTMLElement)) return
+  element.scrollIntoView({ block: 'center' })
+  highlightedId.value = id
+  if (highlightTimer !== undefined) window.clearTimeout(highlightTimer)
+  highlightTimer = window.setTimeout(() => {
+    highlightedId.value = ''
+  }, 6000)
+}
+
+async function exportTranscript(): Promise<void> {
+  if (!room.value || exporting.value) return
+  exporting.value = true
+  exportError.value = ''
+  try {
+    const { blob, filename } = await api.exportRoom(room.value.id)
+    downloadBlob(blob, filename)
+    menuOpen.value = false
+  } catch (error) {
+    exportError.value =
+      error instanceof ApiError
+        ? humanizeServerError(error.message)
+        : 'Transkrip belum bisa diunduh. Periksa koneksi lalu coba lagi.'
+  } finally {
+    exporting.value = false
   }
 }
 
@@ -273,6 +325,13 @@ function reloadRoom(): void {
 function loadOlder(): Promise<void> {
   return store.value?.loadOlder() ?? Promise.resolve()
 }
+
+watch(
+  () => route.query.m,
+  (value) => {
+    if (typeof value === 'string' && value !== '' && room.value) void scrollToMessage(value)
+  },
+)
 
 watch(
   () => route.params.id,
@@ -332,6 +391,7 @@ onBeforeUnmount(() => {
   contentObserver?.disconnect()
   contentObserver = null
   if (continuationTimer !== undefined) window.clearInterval(continuationTimer)
+  if (highlightTimer !== undefined) window.clearTimeout(highlightTimer)
   voice.dispose()
   speaker.dispose()
   store.value?.dispose()
@@ -390,7 +450,7 @@ onBeforeUnmount(() => {
             {{ stateChipLabel }}
           </span>
         </div>
-        <p class="min-w-0 flex-1 truncate text-[11.5px] text-quiet">
+        <p class="hidden min-w-0 flex-1 truncate text-[11.5px] text-quiet sm:block">
           {{ room?.topic || (room ? 'Tanpa topik' : '') }}
         </p>
         <button
@@ -421,6 +481,48 @@ onBeforeUnmount(() => {
           <PhFiles :size="17" />
           <span class="hidden sm:inline">File</span>
         </button>
+
+        <div class="relative shrink-0">
+          <button
+            type="button"
+            class="tap flex items-center justify-center rounded-xl border border-line px-2 text-muted hover:border-orchid/40 hover:text-ink"
+            aria-label="Menu room"
+            aria-haspopup="menu"
+            :aria-expanded="menuOpen"
+            data-testid="room-menu-more"
+            @click="menuOpen = !menuOpen"
+          >
+            <PhDotsThreeVertical :size="17" />
+          </button>
+
+          <div v-if="menuOpen" class="fixed inset-0 z-20" @click="menuOpen = false" />
+
+          <div
+            v-if="menuOpen"
+            class="absolute right-0 top-full z-30 mt-1.5 w-60 rounded-xl border border-line bg-bg-deep p-1.5 shadow-2xl"
+            role="menu"
+          >
+            <button
+              type="button"
+              class="tap flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left hover:bg-surface disabled:opacity-60"
+              role="menuitem"
+              :disabled="exporting"
+              data-testid="export-room"
+              @click="exportTranscript"
+            >
+              <PhDownloadSimple :size="16" class="mt-0.5 shrink-0 text-muted" />
+              <span class="min-w-0">
+                <span class="block text-[13px] text-ink">
+                  {{ exporting ? 'Menyiapkan transkrip…' : 'Ekspor transkrip' }}
+                </span>
+                <span class="mt-0.5 block text-[11.5px] text-quiet">Markdown (.md)</span>
+              </span>
+            </button>
+            <p v-if="exportError" class="px-2.5 pb-1 pt-1.5 text-[11.5px] leading-snug text-muted" role="alert">
+              {{ exportError }}
+            </p>
+          </div>
+        </div>
       </div>
     </header>
 
@@ -505,7 +607,13 @@ onBeforeUnmount(() => {
             </button>
 
             <ol class="space-y-5" data-testid="message-list">
-              <li v-for="message in messages" :key="message.id">
+              <li
+                v-for="message in messages"
+                :key="message.id"
+                :data-message-id="message.id"
+                class="rounded-2xl transition-shadow"
+                :class="highlightedId === message.id ? 'ring-2 ring-orchid/60 ring-offset-2 ring-offset-bg' : ''"
+              >
                 <MessageBubble
                   :message="message"
                   :speaking="speaker.state.playingId === message.id"

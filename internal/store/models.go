@@ -45,13 +45,14 @@ type File struct {
 }
 
 type Message struct {
-	ID        uuid.UUID
-	RoomID    uuid.UUID
-	Role      string
-	Body      string
-	RunID     *string
-	CreatedAt time.Time
-	Meta      []byte
+	ID           uuid.UUID
+	RoomID       uuid.UUID
+	Role         string
+	Body         string
+	RunID        *string
+	CreatedAt    time.Time
+	Meta         []byte
+	SearchVector []byte
 }
 
 type Room struct {

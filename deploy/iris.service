@@ -1,0 +1,19 @@
+[Unit]
+Description=Iris — irisd (rooms, streaming, static SPA)
+Documentation=file://%h/Documents/projects/iris/changelogs/2026-11-12-p5-hardening.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Documents/projects/iris
+EnvironmentFile=%h/.config/iris/env
+ExecStart=%h/Documents/projects/iris/bin/irisd
+Restart=always
+RestartSec=2
+KillSignal=SIGTERM
+TimeoutStopSec=15
+UMask=0077
+
+[Install]
+WantedBy=default.target

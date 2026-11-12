@@ -133,10 +133,16 @@ func (s *Service) Logout(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]bool{"authenticated": false})
 }
 
-// Middleware requires a valid cookie on every route except login and health.
+// Middleware requires a valid cookie on every /api route except login and
+// health. The SPA itself stays public: login is a browser route and its bundle
+// cannot carry a cookie before the owner has signed in.
 func (s *Service) Middleware(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
-		switch c.Request().URL.Path {
+		requestPath := c.Request().URL.Path
+		if !strings.HasPrefix(requestPath, "/api/") && requestPath != "/api" {
+			return next(c)
+		}
+		switch requestPath {
 		case "/api/auth/login", "/api/health":
 			return next(c)
 		}

@@ -29,8 +29,10 @@ type Store interface {
 
 	InsertMessage(ctx context.Context, arg store.InsertMessageParams) (store.Message, error)
 	ListMessages(ctx context.Context, arg store.ListMessagesParams) ([]store.Message, error)
+	ListAllMessages(ctx context.Context, roomID uuid.UUID) ([]store.Message, error)
 	GetMessage(ctx context.Context, id uuid.UUID) (store.Message, error)
 	GetLatestAssistantMessage(ctx context.Context, roomID uuid.UUID) (store.Message, error)
+	SearchMessages(ctx context.Context, arg store.SearchMessagesParams) ([]store.SearchMessagesRow, error)
 
 	CreateContinuation(ctx context.Context, arg store.CreateContinuationParams) (store.Continuation, error)
 	GetContinuation(ctx context.Context, id uuid.UUID) (store.Continuation, error)
@@ -75,6 +77,7 @@ type Options struct {
 	Logger               *slog.Logger
 	Version              string
 	DataDir              string
+	WebDir               string
 	Now                  func() time.Time
 	ContinuationInterval time.Duration
 	RunContinuations     bool
@@ -123,6 +126,7 @@ func New(opts Options) *echo.Echo {
 	e.PATCH("/api/rooms/:id/prompt", s.updateRoomPrompt)
 	e.GET("/api/rooms/:id/messages", s.listMessages)
 	e.POST("/api/rooms/:id/messages", s.streamMessage)
+	e.GET("/api/rooms/:id/export.md", s.exportRoom)
 	e.GET("/api/rooms/:id/continuation", s.getContinuation)
 	e.POST("/api/rooms/:id/continuation/cancel", s.cancelContinuation)
 	e.GET("/api/rooms/:id/files", s.listRoomFiles)
@@ -133,6 +137,15 @@ func New(opts Options) *echo.Echo {
 
 	e.GET("/api/files/:id", s.downloadFile)
 	e.DELETE("/api/files/:id", s.deleteFile)
+
+	e.GET("/api/search", s.searchMessages)
+
+	// Unknown API paths answer JSON; they must never fall through to the SPA
+	// history handler and return index.html.
+	e.Any("/api", apiNotFound)
+	e.Any("/api/*", apiNotFound)
+
+	s.registerWeb(e, opts.WebDir)
 
 	if opts.RunContinuations {
 		s.StartContinuations(context.Background())

@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { artifactCard, fileKind, fileTypeLabel, fileUrl, formatBytes, isImage } from './files'
+import {
+  artifactCard,
+  fileKind,
+  fileTypeLabel,
+  fileUrl,
+  filenameFromDisposition,
+  formatBytes,
+  isImage,
+} from './files'
 
 describe('file presentation', () => {
   it('formats Indonesian sizes', () => {
@@ -35,5 +43,18 @@ describe('file presentation', () => {
     expect(card.downloadUrl).toBe('/api/files/f%201')
     expect(fileUrl('abc')).toBe('/api/files/abc')
     expect(fileTypeLabel('application/pdf', 'x.pdf')).toBe('PDF')
+  })
+
+  it('reads the export filename from Content-Disposition', () => {
+    expect(filenameFromDisposition('attachment; filename="kerja-2026-11-12.md"')).toBe(
+      'kerja-2026-11-12.md',
+    )
+    expect(filenameFromDisposition("attachment; filename*=UTF-8''rencana%20kerja.md")).toBe(
+      'rencana kerja.md',
+    )
+    expect(filenameFromDisposition('attachment; filename=p5-kerja-2026-11-12.md')).toBe(
+      'p5-kerja-2026-11-12.md',
+    )
+    expect(filenameFromDisposition(null)).toBe('transkrip-iris.md')
   })
 })
