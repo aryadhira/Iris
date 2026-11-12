@@ -292,3 +292,53 @@ describe('formatElapsed', () => {
     expect(formatElapsed(65000)).toBe('1:05')
   })
 })
+
+describe('speaker keeps the audio element alive while it plays', () => {
+  // Regression: playStream used to resolve its wait on play() starting, then call dispose()
+  // (pause + revokeObjectURL) while the sound was still playing. The speaker looked broken because
+  // it went silent microseconds after starting. The fake here never fires 'ended' on its own, which
+  // is what a real 20-second clip does and what the old test double failed to model.
+  it('does not dispose the element before playback ends', async () => {
+    const dispose = vi.fn()
+    const heard: { end: (() => void) | null } = { end: null }
+    let paused = false
+
+    async function* stream() {
+      yield new Blob(['chunk'], { type: 'audio/mpeg' })
+    }
+
+    const speaker = createSpeakerStore({
+      speakStream: stream,
+      speak: vi.fn(async () => new Blob()),
+      createAudio: () => ({
+        play: async () => {}, // started, still playing
+        pause: () => {
+          paused = true
+        },
+        dispose,
+        get onended() {
+          return heard.end
+        },
+        set onended(handler: (() => void) | null) {
+          heard.end = handler
+        },
+      }),
+    })
+
+    const playback = speaker.toggle('m1', 'halo')
+    const deadline = Date.now() + 2000
+    while (Date.now() < deadline && speaker.state.playingId !== 'm1') {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    expect(speaker.state.playingId).toBe('m1')
+
+    // give the old behaviour time to bite
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(paused).toBe(false)
+    expect(dispose).not.toHaveBeenCalled()
+
+    heard.end?.()
+    await playback
+    expect(dispose).toHaveBeenCalled()
+  })
+})

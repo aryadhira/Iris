@@ -505,17 +505,26 @@ export function createSpeakerStore(deps: Partial<SpeakerDeps> = {}) {
               settled = true
               resolve()
             }
-            audio.onended = done
-            signal.addEventListener('abort', done, { once: true })
+            const guard = setTimeout(done, 60_000)
+            const settle = (): void => {
+              clearTimeout(guard)
+              done()
+            }
+            audio.onended = settle
+            signal.addEventListener('abort', settle, { once: true })
             audio
               .play()
               .then(() => {
                 playedAny = true
-                done()
+                // Do NOT resolve here. play() resolving means the sound STARTED, not finished:
+                // resolving here disposes the element (pause + revokeObjectURL) while it is still
+                // playing, which is exactly the "clicking the speaker plays nothing" bug.
               })
               .catch(() => {
-                // A single bad chunk is skipped; the next one still plays.
-                done()
+                // A chunk that cannot start (autoplay refusal, decode failure) is skipped so the
+                // next one still plays, but we stop waiting for an 'ended' that will never come.
+                audio.onended = null
+                settle()
               })
           })
           audio.dispose()

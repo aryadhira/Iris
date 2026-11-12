@@ -250,3 +250,22 @@ shown anywhere in the UI.
 ## Deployed
 
 schema 10, web + `irisd` rebuilt, units restarted, local 200, public 200.
+
+## Bug found by Boss: the small speaker played nothing
+
+**Cause.** In `playStream`, the wait for a chunk resolved on `play()` **starting**, not on playback ending —
+and the very next line called `audio.dispose()`, which pauses the element and revokes the blob URL. Every chunk
+was killed microseconds after it began, so the speaker looked dead. The existing test double had hidden it by
+firing `onended` inside `play()`, which no real 6-second clip does.
+
+**Fix.** The wait now resolves on `onended` (or on abort, or on a failed start, or after a 60 s guard), and the
+element is disposed only afterwards. A chunk that cannot start is skipped so the rest still plays.
+
+**Proof, in three layers.**
+1. A regression test whose fake resolves `play()` and never ends by itself: fails on the old code
+   (`expected '' to be 'm1'` — the state never even reached "playing"), passes now.
+2. Real browser, trusted click on the speaker: state flips to "Hentikan bacaan" and stays.
+3. The media element itself, instrumented through the `Audio` constructor:
+   `playing: 1`, `currentTime 0.86 → 4.84` of a `6.264 s` clip, `errors: []`.
+
+63 web tests, build clean. Bundle `index-X8n7mQ7U.js` deployed.
