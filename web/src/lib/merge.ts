@@ -1,3 +1,4 @@
+import { cleanReply } from './reply'
 import type { ChatMessage, StoredMessage } from './types'
 
 export function isLocalId(id: string): boolean {
@@ -8,7 +9,10 @@ export function messageFromStored(row: StoredMessage): ChatMessage {
   return {
     id: row.id,
     role: row.role === 'user' ? 'user' : row.role === 'system' ? 'system' : 'assistant',
-    body: row.body,
+    // Old assistant rows may predate the server-side cleaner; user words are
+    // never rewritten.
+    body:
+      row.role === 'user' || row.role === 'system' ? row.body : cleanReply(row.body),
     createdAt: row.created_at,
     runId: row.run_id ?? undefined,
     meta: row.meta,

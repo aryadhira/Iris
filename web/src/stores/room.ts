@@ -2,6 +2,7 @@ import { reactive } from 'vue'
 import { api } from '../lib/api'
 import { humanizeServerError } from '../lib/errors'
 import { mergeStored } from '../lib/merge'
+import { ReplyStream } from '../lib/reply'
 import { frameJson, SseParser, type SseFrame } from '../lib/sse'
 import type {
   Approval,
@@ -104,9 +105,13 @@ export function createRoomStore(
   })
 
   let controller: AbortController | null = null
+  // One cleaner per reply. It holds a trailing "--" until the next chunk
+  // decides whether it is an em dash or part of a command-line flag.
+  let cleaner: ReplyStream | null = null
   let disposed = false
 
   function resetTurn(): void {
+    cleaner = null
     state.streamingText = ''
     state.currentTool = ''
     state.turnStartedAt = 0
@@ -264,6 +269,7 @@ export function createRoomStore(
     state.streamingText = ''
     state.currentTool = ''
     state.turnStartedAt = d.now()
+    cleaner = new ReplyStream()
 
     // The optimistic bubble already carries the text, so the composer can
     // clear at once; a failed request puts the text back for a retry.
@@ -334,6 +340,7 @@ export function createRoomStore(
     state.streamingText = ''
     state.currentTool = ''
     state.turnStartedAt = d.now()
+    cleaner = new ReplyStream()
 
     // Dim the reply that is about to be replaced right away, so the transcript
     // never shows two current answers while the new one streams.
@@ -436,7 +443,9 @@ export function createRoomStore(
         if (payload?.text) {
           if (state.phase !== 'streaming') state.phase = 'streaming'
           if (state.turnStartedAt === 0) state.turnStartedAt = d.now()
-          state.streamingText += payload.text
+          if (!cleaner) cleaner = new ReplyStream()
+          const visible = cleaner.feed(payload.text)
+          if (visible !== '') state.streamingText += visible
         }
         return false
       }
@@ -457,6 +466,11 @@ export function createRoomStore(
       }
       case 'done': {
         const payload = frameJson<{ messageId?: string }>(frame)
+        if (cleaner) {
+          const rest = cleaner.flush()
+          if (rest !== '') state.streamingText += rest
+          cleaner = null
+        }
         finishTurn(payload?.messageId ?? '')
         void reconcile()
         void refreshApprovals()
@@ -486,6 +500,7 @@ export function createRoomStore(
         local: messageId === '',
       })
     }
+    cleaner = null
     state.streamingText = ''
     state.currentTool = ''
     state.turnStartedAt = 0
@@ -513,6 +528,7 @@ export function createRoomStore(
       const rows = await d.listMessages(roomId)
       state.messages = mergeStored(state.messages, oldestFirst(rows))
       if (assistantAfterLastUser()) {
+        cleaner = null
         state.streamingText = ''
         state.currentTool = ''
         state.turnStartedAt = 0
@@ -554,6 +570,7 @@ export function createRoomStore(
         const rows = await d.listMessages(roomId)
         state.messages = mergeStored(state.messages, oldestFirst(rows))
         if (assistantAfterLastUser()) {
+          cleaner = null
           state.streamingText = ''
           state.currentTool = ''
           state.turnStartedAt = 0

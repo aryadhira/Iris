@@ -1,0 +1,8 @@
+Contoh perintah:
+
+```sql
+-- catatan: jangan hapus baris ini
+SELECT * FROM rooms;
+```
+
+Jalankan `iris --auto --force` lalu periksa hasilnya.

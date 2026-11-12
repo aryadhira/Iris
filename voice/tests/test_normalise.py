@@ -8,7 +8,96 @@ from __future__ import annotations
 
 import unittest
 
-from voice.normalise import normalise_for_speech, number_to_words, split_sentences
+from voice.normalise import clean_reply, normalise_for_speech, number_to_words, split_sentences
+
+
+class TestReplyCleaner(unittest.TestCase):
+    """The same table as internal/reply/reply_test.go: the two must not drift."""
+
+    CASES = [
+        (
+            "status line removed",
+            "Sudah selesai.\n\nSTATUS: DONE — laporan ada di outbox.\n",
+            "Sudah selesai.",
+        ),
+        (
+            "markdown-wrapped status removed",
+            "**STATUS: BLOCKED** — butuh izin\nTeks lain.",
+            "Teks lain.",
+        ),
+        (
+            "status at the start leaves no leading blank",
+            "STATUS: RUNNING — 5 detik\n\nTeks lain.",
+            "Teks lain.",
+        ),
+        (
+            "status in the middle leaves one paragraph break",
+            "Satu.\n\nSTATUS: DONE — selesai\n\nDua.",
+            "Satu.\n\nDua.",
+        ),
+        (
+            "standalone double dash becomes em dash",
+            "Langkah pertama -- lalu langkah kedua.",
+            "Langkah pertama — lalu langkah kedua.",
+        ),
+        (
+            "line-start double dash becomes em dash",
+            "-- catatan penting\nSelesai.",
+            "— catatan penting\nSelesai.",
+        ),
+        (
+            "cli flag is untouched",
+            "Jalankan `iris --auto --force` sekarang.",
+            "Jalankan `iris --auto --force` sekarang.",
+        ),
+        (
+            "bare cli flag outside code is untouched",
+            "Jalankan --auto dan --force.",
+            "Jalankan --auto dan --force.",
+        ),
+        (
+            "fenced comment is untouched",
+            "Contoh:\n```sql\n-- catatan\nSELECT 1;\n```\nSelesai.",
+            "Contoh:\n```sql\n-- catatan\nSELECT 1;\n```\nSelesai.",
+        ),
+        (
+            "status inside a fence is untouched",
+            "```\nSTATUS: DONE — contoh\n```",
+            "```\nSTATUS: DONE — contoh\n```",
+        ),
+        (
+            "horizontal rule and its blank line removed",
+            "Satu.\n\n---\n\nDua.",
+            "Satu.\n\nDua.",
+        ),
+        ("long rule removed", "Satu.\n-----\nDua.", "Satu.\nDua."),
+        (
+            "artifact marker removed",
+            "Selesai.\n[[artifact: outbox/a.md]]\n",
+            "Selesai.",
+        ),
+        (
+            "status inside inline code is untouched",
+            "Contoh `STATUS: DONE` bukan status.",
+            "Contoh `STATUS: DONE` bukan status.",
+        ),
+    ]
+
+    def test_table(self):
+        for name, raw, want in self.CASES:
+            with self.subTest(name=name):
+                self.assertEqual(clean_reply(raw), want)
+                self.assertEqual(clean_reply(clean_reply(raw)), want)
+
+    def test_speech_never_contains_status_or_a_bare_double_dash(self):
+        out = normalise_for_speech(
+            "Selesai -- laporan siap.\n\nSTATUS: DONE — laporan ada di outbox."
+        )
+        self.assertNotIn("STATUS", out)
+        self.assertNotIn("--", out)
+        self.assertNotIn("stripes", out.lower())
+        self.assertNotIn("minus minus", out.lower())
+        self.assertIn("laporan siap", out)
 
 
 class TestNumbers(unittest.TestCase):

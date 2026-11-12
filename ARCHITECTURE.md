@@ -78,6 +78,11 @@ So Iris owns artifacts: the agent writes into `outbox/`, ends the turn with
 serves a normal download. One link that works on a phone, forever. A marker whose file is missing stays
 in the reply — a broken promise must remain visible.
 
+One reply cleaner (`internal/reply`, mirrored by `voice/normalise.clean_reply`) removes the agent's `STATUS:` line
+and `[[artifact: …]]` markers, turns a standalone `--` into an em dash, and removes a `---` rule. Code fences and
+inline code are never modified. The continuity parser reads the raw reply first, so hiding the status from the
+screen never hides it from the pump.
+
 The room contract is six lines of Indonesian stored on the room. Measured on v0.21.6+636: a session's
 `system_prompt` is persisted by `POST /api/sessions` but is **not applied to `/chat/stream` turns**. irisd
 therefore sends the same text as per-turn `instructions`, which this build does apply; the session prompt
@@ -85,7 +90,10 @@ is still stored for the record.
 
 ## Voice
 
-Push-to-talk → transcript → editable → send. Speech out is a **summary**, never the formatted text:
+Push-to-talk → transcript → sent immediately. There is no editable draft: an empty transcript sends nothing and shows
+the no-speech hint, while a failed send puts the recognised words back in the composer. A short "terkirim" toast
+shows exactly what was sent, and the user message's "Coba lagi" is available at once. Speech out is a **summary**,
+never the formatted text:
 markdown stripped, code/tables dropped, secrets redacted, numbers spoken, max two sentences, full answer
 on screen. edge-tts, `-8%`, Indonesian female.
 

@@ -13,6 +13,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/aryadhira/iris/internal/files"
+	"github.com/aryadhira/iris/internal/reply"
 )
 
 var indonesianMonths = [...]string{
@@ -78,7 +79,14 @@ func (s *Server) exportRoom(c echo.Context) error {
 		}
 		fmt.Fprintf(&body, "**%s** · %s\n\n", label, indonesianDateTime(message.CreatedAt))
 		if message.Body != "" {
-			body.WriteString(message.Body)
+			// The export is a reading surface too: an old assistant row written
+			// before the cleaner existed still must not leak STATUS or a bare --.
+			// Boss' own words are copied verbatim.
+			if message.Role == "assistant" {
+				body.WriteString(reply.Clean(message.Body))
+			} else {
+				body.WriteString(message.Body)
+			}
 			body.WriteString("\n\n")
 		}
 		attachments := byMessage[message.ID]

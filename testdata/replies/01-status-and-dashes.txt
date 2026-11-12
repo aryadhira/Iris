@@ -1,0 +1,5 @@
+Halo Boss, laporan sudah siap.
+
+Ringkasan: tiga tes lulus -- tidak ada yang gagal.
+
+STATUS: DONE — laporan ada di outbox.

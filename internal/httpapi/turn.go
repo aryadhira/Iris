@@ -14,6 +14,7 @@ import (
 	"github.com/aryadhira/iris/internal/artifacts"
 	"github.com/aryadhira/iris/internal/continuation"
 	"github.com/aryadhira/iris/internal/hermes"
+	"github.com/aryadhira/iris/internal/reply"
 	"github.com/aryadhira/iris/internal/rooms"
 	"github.com/aryadhira/iris/internal/store"
 )
@@ -122,6 +123,10 @@ func (s *Server) runTurn(
 	)
 	trace := newToolTrace()
 	currentTool := ""
+	// The live stream is cleaned as it arrives. The parser still sees the raw
+	// text below, so a STATUS line is never lost to the pump just because the
+	// screen is not allowed to show it.
+	visible := &reply.Stream{}
 
 	streamErr := s.hermes.StreamChat(ctx, room.HermesSessionID, prompt, rooms.TurnInstructions(room.SystemPrompt), func(ev hermes.Event) error {
 		if ev.RunID != "" && ev.RunID != runID {
@@ -132,7 +137,9 @@ func (s *Server) runTurn(
 		switch ev.Kind {
 		case "delta":
 			assistant.WriteString(ev.Text)
-			sendEvent(emit, "delta", map[string]string{"text": ev.Text})
+			if text := visible.Feed(ev.Text); text != "" {
+				sendEvent(emit, "delta", map[string]string{"text": text})
+			}
 		case "tool":
 			if ev.Name != "" && (ev.Status == "started" || ev.Status == "" || ev.Status == "running") {
 				currentTool = ev.Name
@@ -198,6 +205,12 @@ func (s *Server) runTurn(
 		}
 		return nil
 	})
+
+	// Release any held tail (an ordinary final line, or a line whose status was
+	// withheld). Flushing is safe after a stop as well: the raw body is kept.
+	if text := visible.Flush(); text != "" {
+		sendEvent(emit, "delta", map[string]string{"text": text})
+	}
 
 	rawBody := assistant.String()
 	if rawBody == "" && finalText != "" {
@@ -344,7 +357,9 @@ func (s *Server) persistAssistant(
 			}
 			return abs, nil
 		})
-		cleanedBody = result.Body
+		// artifacts.Process is the one place that decides whether a marker is a
+		// real file or a broken promise; the cleaner must not hide the latter.
+		cleanedBody = reply.CleanKeepingArtifacts(result.Body)
 		found = result.Files
 		for _, broken := range result.Broken {
 			s.logger.Warn("artifact promised but not found", "room_id", room.ID.String(), "path", broken)

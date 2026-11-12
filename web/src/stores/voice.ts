@@ -266,8 +266,10 @@ export function createVoiceStore(
         state.errorText = noSpeechMessage()
         return
       }
+      // A transcript is not a draft any more: send it immediately. The room
+      // handles a failed send by putting the words back in the composer.
       options.onTranscript?.(text)
-      state.phase = 'editing'
+      state.phase = 'idle'
       state.elapsedMs = 0
       state.locked = false
     } catch {

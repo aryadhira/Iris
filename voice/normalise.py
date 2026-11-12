@@ -14,6 +14,203 @@ from __future__ import annotations
 
 import re
 
+# ---------------------------------------------------------------- reply cleaner
+#
+# This is the Python mirror of internal/reply in irisd. Both implementations
+# read the same files in testdata/replies/ and scripts/check-cleaner-parity.sh
+# fails if one byte differs. Keep the rules in the same order as the Go file.
+
+_STATUS_LINE = re.compile(
+    r"^[ \t>*_`#]*STATUS:[ \t]*(?:RUNNING|DONE|BLOCKED|CONTINUE)\b[^\n]*(?:\r?\n)?(?:\r?\n)?",
+    re.IGNORECASE | re.MULTILINE,
+)
+_ARTIFACT_LINE = re.compile(
+    r"^[ \t]*\[\[\s*artifact\s*:\s*(.+?)\s*\]\][ \t]*\r?\n?", re.MULTILINE
+)
+_RESIDUAL_STATUS = re.compile(
+    r"STATUS:\s*(?:RUNNING|DONE|BLOCKED|CONTINUE)\b[^\n]*", re.IGNORECASE
+)
+_TAGGED_STATUS = re.compile(
+    r"(?:<mark>)?STATUS(?:</mark>)?\s*:\s*(?:<mark>)?"
+    r"(?:RUNNING|DONE|BLOCKED|CONTINUE)\b[^\n]*",
+    re.IGNORECASE,
+)
+
+
+def _sentinel(index: int) -> str:
+    return f"\x00R{index}\x01"
+
+
+def _opening_fence(line: str):
+    trimmed = line.lstrip(" ")
+    if len(line) - len(trimmed) > 3 or len(trimmed) < 3:
+        return None
+    char = trimmed[0]
+    if char not in "`~":
+        return None
+    width = 0
+    while width < len(trimmed) and trimmed[width] == char:
+        width += 1
+    return (char, width) if width >= 3 else None
+
+
+def _closing_fence(line: str, char: str, width: int) -> bool:
+    trimmed = line.lstrip(" ")
+    if len(line) - len(trimmed) > 3 or len(trimmed) < width:
+        return False
+    if trimmed[:width] != char * width:
+        return False
+    return trimmed[width:].strip() == ""
+
+
+def _mask_inline(line: str, base: int):
+    out: list[str] = []
+    spans: list[str] = []
+    i = 0
+    while i < len(line):
+        if line[i] != "`":
+            out.append(line[i])
+            i += 1
+            continue
+        run = 0
+        while i + run < len(line) and line[i + run] == "`":
+            run += 1
+        close_at = _find_backtick_run(line, i + run, run)
+        if close_at < 0:
+            out.append(line[i : i + run])
+            i += run
+            continue
+        end = close_at + run
+        out.append(_sentinel(base + len(spans)))
+        spans.append(line[i:end])
+        i = end
+    return "".join(out), spans
+
+
+def _find_backtick_run(text: str, start: int, width: int) -> int:
+    i = start
+    while i < len(text):
+        if text[i] != "`":
+            i += 1
+            continue
+        run = 0
+        while i + run < len(text) and text[i + run] == "`":
+            run += 1
+        if run == width:
+            return i
+        i += run
+    return -1
+
+
+def _mask_code(text: str):
+    lines = text.splitlines(keepends=True)
+    if not lines:
+        return text, []
+    out: list[str] = []
+    spans: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        opening = _opening_fence(line)
+        if opening:
+            char, width = opening
+            end = len(lines) - 1
+            for j in range(i + 1, len(lines)):
+                if _closing_fence(lines[j], char, width):
+                    end = j
+                    break
+            out.append(_sentinel(len(spans)))
+            spans.append("".join(lines[i : end + 1]))
+            i = end + 1
+            continue
+        masked, line_spans = _mask_inline(line, len(spans))
+        out.append(masked)
+        spans.extend(line_spans)
+        i += 1
+    return "".join(out), spans
+
+
+def _is_space(char: str) -> bool:
+    return char in " \t\n\r"
+
+
+def _replace_standalone_dashes(text: str) -> str:
+    if "--" not in text:
+        return text
+    out: list[str] = []
+    i = 0
+    while i < len(text):
+        if (
+            text.startswith("--", i)
+            and (i == 0 or _is_space(text[i - 1]))
+            and (i + 2 == len(text) or _is_space(text[i + 2]))
+        ):
+            end = i + 2
+            while end < len(text) and text[end] == "-":
+                end += 1
+            if end - i == 2:
+                out.append("—")
+                i = end
+                continue
+        out.append(text[i])
+        i += 1
+    return "".join(out)
+
+
+def _is_rule_line(line: str) -> bool:
+    stripped = line.rstrip("\r\n").strip()
+    return len(stripped) >= 3 and set(stripped) == {"-"}
+
+
+def _remove_rule_lines(text: str) -> str:
+    lines = text.splitlines(keepends=True)
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        if _is_rule_line(lines[i]):
+            if i + 1 < len(lines) and lines[i + 1].strip() == "":
+                i += 1
+            i += 1
+            continue
+        out.append(lines[i])
+        i += 1
+    return "".join(out)
+
+
+def _clean_reply(text: str, drop_artifacts: bool, trim: bool) -> str:
+    if text == "":
+        return ""
+    masked, spans = _mask_code(text)
+    masked = _STATUS_LINE.sub("", masked)
+    if drop_artifacts:
+        masked = _ARTIFACT_LINE.sub("", masked)
+    masked = _replace_standalone_dashes(masked)
+    masked = _remove_rule_lines(masked)
+    if trim:
+        masked = masked.rstrip(" \t\r\n")
+    for index, span in enumerate(spans):
+        masked = masked.replace(_sentinel(index), span)
+    return masked
+
+
+def clean_reply(text: str) -> str:
+    """The visible-text cleaner. Mirrors internal/reply.Clean in Go."""
+    return _clean_reply(text, True, True)
+
+
+def clean_keeping_artifacts(text: str) -> str:
+    """Clean without removing markers; persistence resolves those separately."""
+    return _clean_reply(text, False, True)
+
+
+def clean_snippet(text: str) -> str:
+    """Clean a search snippet, including a STATUS line cut by the snippet window."""
+    out = clean_reply(text)
+    out = _RESIDUAL_STATUS.sub("", out)
+    out = _TAGGED_STATUS.sub("", out)
+    return out.strip()
+
+
 # --------------------------------------------------------------------- markdown
 
 _FENCE = re.compile(r"```.*?```", re.S)
@@ -337,6 +534,10 @@ def normalise_for_speech(text: str) -> str:
     """Turn a written reply into the spoken summary Iris sends to edge-tts."""
     if not text or not text.strip():
         return ""
+
+    # The same rules as the screen: STATUS, artifact markers, standalone -- and
+    # horizontal rules are gone before markdown stripping sees the text.
+    text = clean_reply(text)
 
     out, dropped_code, dropped_table = _strip_markdown(text)
 

@@ -12,6 +12,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/aryadhira/iris/internal/reply"
 	irisvoice "github.com/aryadhira/iris/internal/voice"
 )
 
@@ -73,7 +74,7 @@ func (s *Server) voiceSpeak(c echo.Context) error {
 	if err := c.Bind(&payload); err != nil {
 		return c.JSON(http.StatusBadRequest, errorBody("Teks untuk dibacakan tidak terbaca."))
 	}
-	text := strings.TrimSpace(payload.Text)
+	text := strings.TrimSpace(reply.Clean(payload.Text))
 	if text == "" {
 		return c.JSON(http.StatusBadRequest, errorBody("Tidak ada teks yang bisa dibacakan."))
 	}
@@ -114,7 +115,7 @@ func (s *Server) voiceSpeakStream(c echo.Context) error {
 	if err := c.Bind(&payload); err != nil {
 		return c.JSON(http.StatusBadRequest, errorBody("Teks untuk dibacakan tidak terbaca."))
 	}
-	text := strings.TrimSpace(payload.Text)
+	text := strings.TrimSpace(reply.Clean(payload.Text))
 	if text == "" {
 		return c.JSON(http.StatusBadRequest, errorBody("Tidak ada teks yang bisa dibacakan."))
 	}

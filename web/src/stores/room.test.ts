@@ -252,6 +252,33 @@ describe('room store', () => {
     expect(partial?.body).toBe('sebagian')
   })
 
+  it('never shows a STATUS line or a bare -- while a reply streams', async () => {
+    const { deps } = makeDeps({
+      list: [[stored('u1', 'user', 'halo', 1)]],
+      stream: [
+        'event: delta\ndata: {"text":"Selesai --"}\n\n',
+        'event: delta\ndata: {"text":" cepat.\\nSTATUS: DON"}\n\n',
+        'event: delta\ndata: {"text":"E — selesai\\n"}\n\n',
+        'event: done\ndata: {"messageId":"a2"}\n\n',
+      ],
+    })
+    const store = createRoomStore(ROOM, deps)
+    await store.load()
+
+    const observed: string[] = []
+    const stop = setInterval(() => observed.push(store.state.streamingText), 1)
+    await store.send('halo')
+    clearInterval(stop)
+    await tick()
+
+    const reply = store.state.messages.find((message) => message.id === 'a2')
+    expect(reply?.body).toBe('Selesai — cepat.\n')
+    expect(reply?.body).not.toContain('STATUS')
+    expect(reply?.body).not.toContain('--')
+    expect(observed.join('')).not.toContain('STATUS')
+    expect(observed.join('')).not.toContain('--')
+  })
+
   it('shows the pending follow-up and cancels it through the API', async () => {
     const first = [stored('u1', 'user', 'halo', 1)]
     const { deps, calls } = makeDeps({

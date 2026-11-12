@@ -51,7 +51,7 @@ const (
 
 var (
 	procPattern   = regexp.MustCompile(`(?i)\bproc_[0-9a-z]+\b`)
-	statusPattern = regexp.MustCompile(`(?im)^[\s>*_` + "`" + `]*STATUS:\s*(RUNNING|DONE|BLOCKED)\b[^\n]*`)
+	statusPattern = regexp.MustCompile(`(?im)^[\s>*_` + "`" + `]*STATUS:\s*(RUNNING|DONE|BLOCKED|CONTINUE)\b[^\n]*`)
 )
 
 // ExtractProcs returns every distinct process id in the given text, in the
@@ -100,6 +100,11 @@ func ParseStatus(body string) (Status, string) {
 	match := matches[len(matches)-1]
 	line := cleanLine(match[0])
 	kind := strings.ToUpper(match[1])
+	// CONTINUE is a synonym for "still working" in the contract vocabulary.
+	// It must keep the pump alive, not stop it because the word is unfamiliar.
+	if kind == "CONTINUE" {
+		kind = string(StatusRunning)
+	}
 	return Status(kind), line
 }
 
@@ -119,7 +124,11 @@ func StatusKind(line string) Status {
 	if len(matches) < 2 {
 		return StatusNone
 	}
-	return Status(strings.ToUpper(matches[1]))
+	kind := strings.ToUpper(matches[1])
+	if kind == "CONTINUE" {
+		return StatusRunning
+	}
+	return Status(kind)
 }
 
 // Action says what the pump should do after a turn.

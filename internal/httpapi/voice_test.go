@@ -27,6 +27,7 @@ type fakeVoice struct {
 
 	transcribeCalls int
 	speakText       string
+	streamText      string
 }
 
 func (f *fakeVoice) Transcribe(ctx context.Context, audio io.Reader, contentType string) (irisvoice.Transcription, error) {
@@ -46,6 +47,7 @@ func (f *fakeVoice) Speak(ctx context.Context, text string) (*irisvoice.Speech, 
 }
 
 func (f *fakeVoice) SpeakStream(ctx context.Context, text string) (io.ReadCloser, error) {
+	f.streamText = text
 	if f.speakStream != nil {
 		return f.speakStream(ctx, text)
 	}

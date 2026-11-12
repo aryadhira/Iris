@@ -52,6 +52,7 @@ func TestParseStatusUsesTheLastLine(t *testing.T) {
 	for body, want := range map[string]Status{
 		"STATUS: DONE — selesai":           StatusDone,
 		"**STATUS: BLOCKED** — butuh izin": StatusBlocked,
+		"STATUS: CONTINUE — masih jalan":   StatusRunning,
 		"tidak ada status":                 StatusNone,
 	} {
 		if got, _ := ParseStatus(body); got != want {

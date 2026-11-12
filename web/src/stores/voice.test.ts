@@ -58,7 +58,7 @@ describe('push-to-talk state machine', () => {
     expect(recorder.stop).toHaveBeenCalledTimes(1)
     expect(deps.transcribe).toHaveBeenCalledTimes(1)
     expect(onTranscript).toHaveBeenCalledWith('ingatkan saya besok pagi')
-    expect(store.state.phase).toBe('editing')
+    expect(store.state.phase).toBe('idle')
   })
 
   it('a too-short tap is a normal empty state, not a transcript', async () => {

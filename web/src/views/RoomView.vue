@@ -54,10 +54,12 @@ const voice = createVoiceStore(
   {},
   {
     stopPlayback: () => speaker.stop(),
-    onTranscript: (text) => appendTranscript(text),
+    onTranscript: (text) => sendTranscript(text),
   },
 )
 const autoSpeak = ref(false)
+const sentNotice = ref('')
+let sentToastTimer: number | undefined
 let autoSpeakBaseline = new Set<string>()
 let readyForAutoSpeak = false
 
@@ -228,12 +230,37 @@ function toggleAutoSpeak(): void {
   }
 }
 
-/** A misheard name is normal: the transcript is editable and never auto-sent. */
-function appendTranscript(text: string): void {
+/**
+ * A transcript goes straight to Hermes: no editable draft, no extra tap. If
+ * the room cannot accept it, the words stay in the composer and the existing
+ * error path explains why. A misheard name is fixed with "Coba lagi", which
+ * reuses the user row instead of posting a second message.
+ */
+function sendTranscript(text: string): void {
   const current = store.value
   if (!current) return
-  const existing = current.state.draft.trim()
-  current.state.draft = existing === '' ? text : `${existing} ${text}`
+  const body = text.trim()
+  if (body === '') return
+  nearBottom.value = true
+  if (current.state.archived || isWorking.value) {
+    current.state.draft = body
+    current.state.errorText = 'Room ini sedang bekerja. Pesan suaramu ada di kotak, kirim lagi setelah selesai.'
+    return
+  }
+  const ready = attachments.value?.ready ?? []
+  void current.send(body, ready, () => {
+    attachments.value?.clearReady()
+    showSentToast(body)
+  })
+}
+
+function showSentToast(text: string): void {
+  if (sentToastTimer !== undefined) window.clearTimeout(sentToastTimer)
+  sentNotice.value = `terkirim: ${text}`
+  sentToastTimer = window.setTimeout(() => {
+    sentNotice.value = ''
+    sentToastTimer = undefined
+  }, 6000)
 }
 
 function speakMessage(message: ChatMessage): void {
@@ -517,6 +544,7 @@ onBeforeUnmount(() => {
   if (approvalTimer !== undefined) window.clearInterval(approvalTimer)
   if (highlightTimer !== undefined) window.clearTimeout(highlightTimer)
   if (reminderToastTimer !== undefined) window.clearTimeout(reminderToastTimer)
+  if (sentToastTimer !== undefined) window.clearTimeout(sentToastTimer)
   voice.dispose()
   speaker.dispose()
   store.value?.dispose()
@@ -872,6 +900,27 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </div>
+
+    <Transition
+      enter-active-class="transition duration-150 ease-out"
+      enter-from-class="translate-y-2 opacity-0"
+      leave-active-class="transition duration-100 ease-in"
+      leave-to-class="translate-y-2 opacity-0"
+    >
+      <div
+        v-if="sentNotice"
+        class="pointer-events-none fixed inset-x-0 bottom-36 z-30 flex justify-center px-4"
+        role="status"
+        aria-live="polite"
+      >
+        <p
+          class="max-w-full truncate rounded-full border border-orchid/40 bg-bg-deep/95 px-4 py-2 text-[12.5px] text-ink shadow-xl backdrop-blur"
+          data-testid="sent-toast"
+        >
+          {{ sentNotice }}
+        </p>
+      </div>
+    </Transition>
 
     <Transition
       enter-active-class="transition duration-150 ease-out"

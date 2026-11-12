@@ -1,0 +1,9 @@
+Pertama, saya cek port -- port delapan ribu kosong.
+
+```bash
+lsof -i :8000 -- catatan
+```
+
+Kedua, server lama dimatikan.
+
+STATUS: RUNNING — menunggu 90 detik

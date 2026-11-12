@@ -8,6 +8,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/aryadhira/iris/internal/reply"
 	"github.com/aryadhira/iris/internal/store"
 )
 
@@ -65,7 +66,7 @@ func (s *Server) searchMessages(c echo.Context) error {
 			MessageID: row.ID.String(),
 			Role:      row.Role,
 			CreatedAt: row.CreatedAt,
-			Snippet:   string(row.Snippet),
+			Snippet:   reply.CleanSnippet(string(row.Snippet)),
 		})
 	}
 	return c.JSON(http.StatusOK, map[string]any{"results": results})

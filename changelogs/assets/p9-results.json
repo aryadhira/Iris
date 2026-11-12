@@ -1,0 +1,58 @@
+[
+  {
+    "scope": "390",
+    "name": "the sidecar recognised real speech",
+    "pass": true,
+    "detail": "Inyatkan saya besok-",
+    "at": "2026-11-12T12:53:22.675Z"
+  },
+  {
+    "scope": "390",
+    "name": "the toast says terkirim and shows what was sent",
+    "pass": true,
+    "detail": "{\"toast\":\"terkirim: Inyatkan saya besok-\",\"user\":\"Inyatkan saya besok-\\n\\nKamu · 19.53\",\"composer\":\"\",\"sendDisabled\":true,\"status\":false}",
+    "at": "2026-11-12T12:53:22.803Z"
+  },
+  {
+    "scope": "390",
+    "name": "the user message was sent without a Kirim tap",
+    "pass": true,
+    "detail": "Inyatkan saya besok-\n\nKamu · 19.53",
+    "at": "2026-11-12T12:53:22.803Z"
+  },
+  {
+    "scope": "390",
+    "name": "the composer is empty afterwards",
+    "pass": true,
+    "detail": "\"\"",
+    "at": "2026-11-12T12:53:22.803Z"
+  },
+  {
+    "scope": "390",
+    "name": "no STATUS line is visible",
+    "pass": true,
+    "detail": "",
+    "at": "2026-11-12T12:53:22.803Z"
+  },
+  {
+    "scope": "390",
+    "name": "the reply was already streaming (send was accepted)",
+    "pass": true,
+    "detail": "{\"toast\":\"terkirim: Inyatkan saya besok-\",\"user\":\"Inyatkan saya besok-\\n\\nKamu · 19.53\",\"composer\":\"\",\"sendDisabled\":true,\"status\":false}",
+    "at": "2026-11-12T12:53:22.803Z"
+  },
+  {
+    "scope": "390",
+    "name": "the auto-sent message has Coba lagi immediately",
+    "pass": true,
+    "detail": "Coba lagi",
+    "at": "2026-11-12T12:53:22.807Z"
+  },
+  {
+    "scope": "390",
+    "name": "screenshot",
+    "pass": true,
+    "detail": "/home/aryadhira/Documents/projects/iris/changelogs/assets/p9-390-autosend.png",
+    "at": "2026-11-12T12:53:22.808Z"
+  }
+]
