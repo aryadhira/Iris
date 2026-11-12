@@ -15,7 +15,9 @@ import (
 
 	"github.com/aryadhira/iris/internal/auth"
 	"github.com/aryadhira/iris/internal/hermes"
+	"github.com/aryadhira/iris/internal/reminder"
 	"github.com/aryadhira/iris/internal/store"
+	"github.com/aryadhira/iris/internal/webpush"
 )
 
 // Store is the persistence surface handlers need. sqlc's *store.Queries
@@ -62,6 +64,23 @@ type Store interface {
 	ResolveApproval(ctx context.Context, arg store.ResolveApprovalParams) (store.Approval, error)
 	ExpireApprovals(ctx context.Context, resolvedAt *time.Time) ([]store.Approval, error)
 	CountPendingApprovalsByRoom(ctx context.Context, expiresAt time.Time) ([]store.CountPendingApprovalsByRoomRow, error)
+
+	CreateReminder(ctx context.Context, arg store.CreateReminderParams) (store.Reminder, error)
+	ListPendingReminders(ctx context.Context, roomID uuid.UUID) ([]store.Reminder, error)
+	CancelReminder(ctx context.Context, arg store.CancelReminderParams) (store.Reminder, error)
+	ListDueReminders(ctx context.Context, arg store.ListDueRemindersParams) ([]store.Reminder, error)
+	FireReminder(ctx context.Context, arg store.FireReminderParams) (store.Message, error)
+
+	ListPushSubscriptions(ctx context.Context) ([]store.PushSubscription, error)
+	UpsertPushSubscription(ctx context.Context, arg store.UpsertPushSubscriptionParams) (store.PushSubscription, error)
+	DeletePushSubscription(ctx context.Context, endpoint string) (int64, error)
+}
+
+// PushNotifier is the seam for Web Push. The real implementation lives in
+// internal/webpush; tests use a recorder.
+type PushNotifier interface {
+	PublicKey() string
+	Notify(ctx context.Context, roomID uuid.UUID, payload webpush.Payload, exempt bool) (int, error)
 }
 
 // Server wires the HTTP surface.
@@ -82,6 +101,14 @@ type Server struct {
 	hub             *roomHub
 	approvalTimeout time.Duration
 	approvalFixture bool
+
+	schemaVersion    string
+	push             PushNotifier
+	reminderLoc      *time.Location
+	reminderInterval time.Duration
+	// bootTime distinguishes "the scheduler is late by one tick" from "the
+	// due time passed while irisd was down".
+	bootTime time.Time
 }
 
 // Options configures a Server.
@@ -100,6 +127,10 @@ type Options struct {
 	ApprovalTimeout      time.Duration
 	RunApprovals         bool
 	ApprovalFixture      bool
+	SchemaVersion        string
+	Push                 PushNotifier
+	RunReminders         bool
+	ReminderInterval     time.Duration
 }
 
 // New builds the Echo application with all routes registered.
@@ -120,13 +151,21 @@ func New(opts Options) *echo.Echo {
 		hub:             newRoomHub(),
 		approvalTimeout: opts.ApprovalTimeout,
 		approvalFixture: opts.ApprovalFixture,
+		schemaVersion:   opts.SchemaVersion,
+		push:            opts.Push,
+		reminderLoc:     reminder.Jakarta(),
 	}
 	if s.now == nil {
 		s.now = time.Now
 	}
+	s.bootTime = s.now()
 	s.continuationInterval = opts.ContinuationInterval
 	if s.continuationInterval == 0 {
 		s.continuationInterval = time.Second
+	}
+	s.reminderInterval = opts.ReminderInterval
+	if s.reminderInterval == 0 {
+		s.reminderInterval = 30 * time.Second
 	}
 
 	e := echo.New()
@@ -154,11 +193,18 @@ func New(opts Options) *echo.Echo {
 	e.GET("/api/rooms/:id/approvals", s.listApprovals)
 	e.POST("/api/rooms/:id/approvals/:approvalId", s.resolveApproval)
 	e.POST("/api/rooms/:id/stop", s.stopRoom)
+	e.GET("/api/rooms/:id/reminders", s.listReminders)
+	e.POST("/api/rooms/:id/reminders", s.createReminder)
+	e.DELETE("/api/rooms/:id/reminders/:rid", s.cancelReminder)
 	if opts.ApprovalFixture {
 		e.POST("/api/rooms/:id/approvals/fixture", s.fixtureApproval)
 	}
 	e.GET("/api/rooms/:id/files", s.listRoomFiles)
 	e.POST("/api/rooms/:id/uploads", s.uploadFile)
+
+	e.GET("/api/push/key", s.pushKey)
+	e.POST("/api/push/subscribe", s.subscribePush)
+	e.DELETE("/api/push/subscribe", s.unsubscribePush)
 
 	e.POST("/api/voice/transcribe", s.voiceTranscribe)
 	e.POST("/api/voice/speak", s.voiceSpeak)
@@ -181,6 +227,9 @@ func New(opts Options) *echo.Echo {
 	if opts.RunApprovals {
 		s.StartApprovals(context.Background())
 	}
+	if opts.RunReminders {
+		s.StartReminders(context.Background())
+	}
 
 	return e
 }
@@ -189,6 +238,7 @@ func (s *Server) health(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]any{
 		"ok":      true,
 		"version": s.version,
+		"schema":  s.schemaVersion,
 	})
 }
 

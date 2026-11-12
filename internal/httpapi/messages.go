@@ -130,6 +130,10 @@ func (s *Server) streamMessage(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, errorBody("Iris could not open that room."))
 	}
 
+	// Boss' own sentence can carry a reminder. Parse before dispatch; if there
+	// is no explicit time this is a no-op and Hermes answers normally.
+	createdReminder, _ := s.createParsedReminder(c.Request().Context(), room, text)
+
 	attachments, err := s.loadAttachments(c.Request().Context(), room.ID, attachmentIDs)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, errorBody("Lampiran itu tidak ada di room ini."))
@@ -251,6 +255,10 @@ func (s *Server) streamMessage(c echo.Context) error {
 		}
 	}()
 
+	if createdReminder != nil {
+		send("reminder", viewReminder(*createdReminder))
+	}
+
 	outcome, streamErr := s.runTurn(turnCtx, room, promptText, send)
 	rawBody := outcome.rawBody
 
@@ -261,6 +269,18 @@ func (s *Server) streamMessage(c echo.Context) error {
 			s.logger.Error("cannot save assistant message", "error", err, "room_id", room.ID.String())
 		} else {
 			saved = row
+		}
+	}
+
+	// Nobody watching? A finished turn gets one push. A phone that is still
+	// attached to this room already sees the reply and stays quiet.
+	if streamErr == nil && saved != nil && !outcome.stopped {
+		watchers := s.hub.count(room.ID)
+		if gone.Load() && watchers > 0 {
+			watchers--
+		}
+		if watchers == 0 {
+			s.notifyPush(turnCtx, room, saved.Body, saved.ID.String(), false)
 		}
 	}
 

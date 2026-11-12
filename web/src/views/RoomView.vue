@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   PhArrowLeft,
+  PhBell,
   PhDotsThreeVertical,
   PhDownloadSimple,
   PhFiles,
@@ -17,6 +18,7 @@ import ContinuationLine from '../components/ContinuationLine.vue'
 import FileLibrary from '../components/FileLibrary.vue'
 import FormattedText from '../components/FormattedText.vue'
 import MessageBubble from '../components/MessageBubble.vue'
+import RoomInspector from '../components/RoomInspector.vue'
 import WorkingLine from '../components/WorkingLine.vue'
 import { ApiError, api } from '../lib/api'
 import { humanizeServerError } from '../lib/errors'
@@ -41,6 +43,7 @@ const dragging = ref(false)
 const notFound = ref(false)
 const openError = ref('')
 const menuOpen = ref(false)
+const inspectorOpen = ref(false)
 const exporting = ref(false)
 const exportError = ref('')
 const highlightedId = ref('')
@@ -101,6 +104,7 @@ const resolvingApproval = computed(() => store.value?.state.resolvingApproval ??
 const resolvingChoice = computed(() => store.value?.state.resolvingChoice ?? '')
 const stopping = computed(() => store.value?.state.stopping ?? false)
 const stopNotice = computed(() => store.value?.state.stopNotice ?? '')
+const reminderNotice = computed(() => store.value?.state.reminderNotice ?? '')
 const canStop = computed(
   () => pendingApprovals.value === 0 && (isWorking.value || Boolean(continuation.value)),
 )
@@ -170,6 +174,7 @@ const stateChipClass = computed(() => {
 
 let continuationTimer: number | undefined
 let approvalTimer: number | undefined
+let reminderToastTimer: number | undefined
 
 function autoSpeakStorageKey(id: string): string {
   return `iris.autospeak.${id}`
@@ -266,6 +271,7 @@ async function openRoom(id: string): Promise<void> {
   attachments.value?.clear()
   attachments.value = null
   libraryOpen.value = false
+  inspectorOpen.value = false
   room.value = null
   notFound.value = false
   openError.value = ''
@@ -443,6 +449,14 @@ watch(phase, async (value) => {
   }
 })
 
+watch(reminderNotice, (value) => {
+  if (reminderToastTimer !== undefined) window.clearTimeout(reminderToastTimer)
+  if (value === '') return
+  reminderToastTimer = window.setTimeout(() => {
+    store.value?.clearReminderNotice()
+  }, 6000)
+})
+
 onMounted(async () => {
   await nextTick()
   const target = scroller.value?.firstElementChild
@@ -468,6 +482,7 @@ onBeforeUnmount(() => {
   if (continuationTimer !== undefined) window.clearInterval(continuationTimer)
   if (approvalTimer !== undefined) window.clearInterval(approvalTimer)
   if (highlightTimer !== undefined) window.clearTimeout(highlightTimer)
+  if (reminderToastTimer !== undefined) window.clearTimeout(reminderToastTimer)
   voice.dispose()
   speaker.dispose()
   store.value?.dispose()
@@ -592,6 +607,21 @@ onBeforeUnmount(() => {
                   {{ exporting ? 'Menyiapkan transkrip…' : 'Ekspor transkrip' }}
                 </span>
                 <span class="mt-0.5 block text-[11.5px] text-quiet">Markdown (.md)</span>
+              </span>
+            </button>
+            <button
+              type="button"
+              class="tap flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left hover:bg-surface"
+              role="menuitem"
+              data-testid="open-inspector"
+              @click="menuOpen = false; inspectorOpen = true"
+            >
+              <PhBell :size="16" class="mt-0.5 shrink-0 text-muted" />
+              <span class="min-w-0">
+                <span class="block text-[13px] text-ink">Pengingat &amp; notifikasi</span>
+                <span class="mt-0.5 block text-[11.5px] text-quiet">
+                  Daftar pengingat dan notifikasi perangkat
+                </span>
               </span>
             </button>
             <p v-if="exportError" class="px-2.5 pb-1 pt-1.5 text-[11.5px] leading-snug text-muted" role="alert">
@@ -786,6 +816,27 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
+    <Transition
+      enter-active-class="transition duration-150 ease-out"
+      enter-from-class="translate-y-2 opacity-0"
+      leave-active-class="transition duration-100 ease-in"
+      leave-to-class="translate-y-2 opacity-0"
+    >
+      <div
+        v-if="reminderNotice"
+        class="pointer-events-none fixed inset-x-0 bottom-24 z-30 flex justify-center px-4"
+        role="status"
+        aria-live="polite"
+      >
+        <p
+          class="rounded-full border border-orchid/40 bg-bg-deep/95 px-4 py-2 text-[12.5px] text-ink shadow-xl backdrop-blur"
+          data-testid="reminder-toast"
+        >
+          {{ reminderNotice }}
+        </p>
+      </div>
+    </Transition>
+
     <Composer
       v-if="store"
       v-model="draft"
@@ -823,6 +874,12 @@ onBeforeUnmount(() => {
       :room-id="room?.id ?? ''"
       @close="libraryOpen = false"
       @changed="onFilesChanged"
+    />
+
+    <RoomInspector
+      :open="inspectorOpen"
+      :room-id="room?.id ?? ''"
+      @close="inspectorOpen = false"
     />
   </div>
 </template>

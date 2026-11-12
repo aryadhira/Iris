@@ -38,6 +38,7 @@ chmod 700 "$ENV_DIR"
 
 install -m 0644 "$UNIT_SRC/iris.service" "$UNIT_DIR/iris.service"
 install -m 0644 "$UNIT_SRC/iris-voice.service" "$UNIT_DIR/iris-voice.service"
+install -m 0644 "$UNIT_SRC/iris-bootcheck.service" "$UNIT_DIR/iris-bootcheck.service"
 echo "units installed in $UNIT_DIR"
 
 if [[ -f "$ENV_FILE" ]]; then
@@ -65,7 +66,7 @@ fi
 
 if [[ "$NO_START" == "1" ]]; then
   echo
-  echo "--no-start: units are installed but not enabled."
+  echo "--no-start: units are installed but not enabled (including iris-bootcheck)."
   echo "Edit $ENV_FILE, then run: $0"
   exit 0
 fi
@@ -86,7 +87,9 @@ if [[ "$ready" != "1" ]]; then
 fi
 
 systemctl --user enable --now iris.service iris-voice.service
+systemctl --user enable iris-bootcheck.service
 echo "iris.service and iris-voice.service enabled and started"
+echo "iris-bootcheck.service enabled (runs after the next boot or a manual start)"
 
 cat <<EOF
 
@@ -94,6 +97,10 @@ Next commands:
   systemctl --user status iris.service iris-voice.service
   curl -fsS http://127.0.0.1:3300/api/health
   curl -fsS http://127.0.0.1:3310/health
+
+Rehearse the boot proof now (does not reboot anything):
+  systemctl --user start iris-bootcheck.service
+  cat ~/iris-data/bootcheck/last-boot.json
 
 Survive a reboot (the missing piece; this script does not run it):
   loginctl enable-linger $USER

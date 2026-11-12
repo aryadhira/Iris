@@ -97,6 +97,44 @@ hang, so the model and one throwaway synthesis are warmed at boot. The microphon
 
 See `voice/README.md` for endpoints, environment variables, and how to run it with `irisd`.
 
+## Reminders
+
+`ingatkan saya …` is parsed by irisd, not Hermes, before the turn is dispatched. The parser is a pure
+function on Boss' own sentence: trigger (`ingatkan|ingetin`) + an explicit `jam HH[:.]MM`, `dalam N
+menit|jam`, `besok jam …`, or `nanti jam …`, in `Asia/Jakarta`. `jam 9` is 09:00; only `malam` (or
+`sore`/`siang`/`pagi`) moves the clock. No explicit time means no reminder and Hermes answers normally.
+A created reminder appears as a small toast in the room.
+
+The scheduler ticks every 30 s and reads `reminders` from Postgres, so a restart neither loses nor
+duplicates work. `FireReminder` updates the row to `fired` **and** inserts the visible
+`⏰ Pengingat: …` system message in one statement. A due time that passed before this process started
+is fired once on boot with `(terlambat …)`. Cancelling a pending row means it can never fire.
+
+## Web Push
+
+The VAPID keypair is generated once at `~/.config/iris/vapid.json` (mode 0600); only the public key is
+served at `GET /api/push/key`. A subscription is one device endpoint with its own keys; the room scope
+records where it was enabled. `web/public/sw.js` is hand-written: `push` shows a notification whose
+`tag` is the room id, and `notificationclick` focuses or opens `/r/<roomId>#m-<messageId>`.
+
+irisd pushes when a run finishes and no SSE client is attached to that room, when an approval is
+pending (always), and when a reminder fires. It debounces to at most one push per room per 30 s,
+except approvals. The wire format is `aes128gcm` + VAPID ES256 via `webpush-go`; the body is plain
+text capped at ~120 characters. iOS requires the PWA installed to the home screen; Android requires
+the installed app, not a bare tab.
+
+## Off-site backups and the boot receipt
+
+`scripts/backup.sh` still builds and verifies one archive. If `IRIS_BACKUP_TARGET` is set it then
+copies off-machine: `rclone:<remote>:<path>` (copy, list the remote, prove the filename) or
+`telegram` (only with `IRIS_BACKUP_TELEGRAM=1`, using the existing bot token without printing it).
+A configured target that fails exits non-zero and rebuilds the archive manifest with `offsite=false`.
+Unset means `off-site: not configured (local only)` and `offsite=false`. Rotation happens only after
+a successful off-site proof.
+
+`deploy/iris-bootcheck.service` is a oneshot after iris and voice. `scripts/bootcheck.sh` waits up to
+60 s for `/api/health`, then writes `~/iris-data/bootcheck/last-boot.json`
+(`{boot_id, at, health, schema, voice}`) and one line in `history.log`.
 
 ## Non-goals
 

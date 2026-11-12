@@ -1,0 +1,14 @@
+[Unit]
+Description=Iris boot proof (health, schema, voice)
+Documentation=file://%h/Documents/projects/iris/changelogs/2026-11-13-p7-notifications-reminders-backup.md
+After=iris.service iris-voice.service
+Wants=iris.service iris-voice.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Documents/projects/iris
+ExecStart=/usr/bin/env bash %h/Documents/projects/iris/scripts/bootcheck.sh
+Nice=10
+
+[Install]
+WantedBy=default.target

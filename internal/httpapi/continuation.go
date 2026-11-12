@@ -298,6 +298,12 @@ func (s *Server) processContinuation(ctx context.Context, row store.Continuation
 		return
 	}
 
+	// The pump has no browser attached by definition; notify unless another
+	// tab happens to be watching this room.
+	if s.hub.count(room.ID) == 0 {
+		s.notifyPush(ctx, room, saved.Body, saved.ID.String(), false)
+	}
+
 	s.scheduleAfterTurn(ctx, room, chainRef{
 		id:        row.ChainID,
 		createdAt: rootCreatedAt,

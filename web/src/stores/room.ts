@@ -95,6 +95,7 @@ export function createRoomStore(
     resolvingChoice: '',
     stopping: false,
     stopNotice: '',
+    reminderNotice: '',
 
     draft: '',
     archived: options.archived ?? false,
@@ -256,6 +257,7 @@ export function createRoomStore(
 
     state.errorText = ''
     state.connectionLost = false
+    state.reminderNotice = ''
     state.phase = 'streaming'
     state.streamingText = ''
     state.currentTool = ''
@@ -383,6 +385,11 @@ export function createRoomStore(
       case 'approval': {
         const payload = frameJson<Approval>(frame)
         if (payload?.id) upsertApproval(payload)
+        return false
+      }
+      case 'reminder': {
+        const payload = frameJson<{ due_at?: string }>(frame)
+        if (payload?.due_at) state.reminderNotice = reminderNotice(payload.due_at)
         return false
       }
       case 'done': {
@@ -524,6 +531,10 @@ export function createRoomStore(
     }
   }
 
+  function clearReminderNotice(): void {
+    state.reminderNotice = ''
+  }
+
   function dispose(): void {
     disposed = true
     controller?.abort()
@@ -541,8 +552,20 @@ export function createRoomStore(
     stopRun,
     send,
     reload,
+    clearReminderNotice,
     dispose,
   }
+}
+
+function reminderNotice(dueAt: string): string {
+  const due = new Date(dueAt)
+  if (Number.isNaN(due.getTime())) return 'Pengingat dibuat.'
+  const time = new Intl.DateTimeFormat('id-ID', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(due)
+  return `Pengingat dibuat untuk ${time}`
 }
 
 async function readErrorMessage(response: Response): Promise<string> {

@@ -1,4 +1,13 @@
-import type { Approval, Continuation, FileAttachment, Room, RoomFile, SearchResult, StoredMessage } from './types'
+import type {
+  Approval,
+  Continuation,
+  FileAttachment,
+  Reminder,
+  Room,
+  RoomFile,
+  SearchResult,
+  StoredMessage,
+} from './types'
 import { filenameFromDisposition } from './files'
 
 export class ApiError extends Error {
@@ -177,6 +186,54 @@ export const api = {
 
   stopRoom(roomId: string): Promise<StopResult> {
     return request(`/api/rooms/${encodeURIComponent(roomId)}/stop`, { method: 'POST' })
+  },
+
+  async listReminders(roomId: string): Promise<Reminder[]> {
+    const body = await request<{ reminders: Reminder[] }>(
+      `/api/rooms/${encodeURIComponent(roomId)}/reminders`,
+    )
+    return body.reminders ?? []
+  },
+
+  async createReminder(roomId: string, text: string, dueAt: string): Promise<Reminder> {
+    const body = await request<{ reminder: Reminder }>(
+      `/api/rooms/${encodeURIComponent(roomId)}/reminders`,
+      { method: 'POST', body: JSON.stringify({ text, due_at: dueAt }) },
+    )
+    return body.reminder
+  },
+
+  deleteReminder(roomId: string, reminderId: string): Promise<{ reminder: Reminder }> {
+    return request(
+      `/api/rooms/${encodeURIComponent(roomId)}/reminders/${encodeURIComponent(reminderId)}`,
+      { method: 'DELETE' },
+    )
+  },
+
+  async getPushKey(): Promise<string> {
+    const body = await request<{ public_key: string }>('/api/push/key')
+    return body.public_key ?? ''
+  },
+
+  subscribePush(
+    roomId: string,
+    subscription: PushSubscriptionJSON,
+  ): Promise<{ subscription: { id: string; room_id: string } }> {
+    return request('/api/push/subscribe', {
+      method: 'POST',
+      body: JSON.stringify({
+        room_id: roomId,
+        endpoint: subscription.endpoint,
+        keys: subscription.keys,
+      }),
+    })
+  },
+
+  unsubscribePush(endpoint: string): Promise<{ deleted: number }> {
+    return request('/api/push/subscribe', {
+      method: 'DELETE',
+      body: JSON.stringify({ endpoint }),
+    })
   },
 
   deleteFile(id: string): Promise<{ deleted: boolean }> {

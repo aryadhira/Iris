@@ -52,6 +52,17 @@ export interface MessageMeta {
   statusLine?: string
 }
 
+/** One reminder owned by a room. */
+export interface Reminder {
+  id: string
+  room_id: string
+  text: string
+  due_at: string
+  state: 'pending' | 'fired' | 'cancelled'
+  created_at: string
+  fired_at?: string | null
+}
+
 /** A pending safety-net follow-up. */
 export interface Continuation {
   id: string

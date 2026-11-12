@@ -156,6 +156,7 @@ func (s *Server) runTurn(
 				s.logger.Error("cannot persist approval", "error", err, "room_id", room.ID.String(), "run_id", runID)
 			} else {
 				s.hub.publish(room.ID, roomEvent{Name: "approval", Payload: viewApproval(*row)})
+				s.notifyApproval(ctx, room, *row)
 			}
 		case "done":
 			if ev.Text != "" {

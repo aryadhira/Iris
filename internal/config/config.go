@@ -18,6 +18,8 @@ const (
 	DefaultDataDir       = "~/iris-data"
 	DefaultVoiceURL      = "http://127.0.0.1:3310"
 	DefaultWebDir        = "web/dist"
+	DefaultVAPIDKeyFile  = "~/.config/iris/vapid.json"
+	DefaultVAPIDSubject  = "iris@localhost"
 )
 
 // Config is the complete runtime configuration. Secrets are held in memory only
@@ -41,6 +43,10 @@ type Config struct {
 	// ApprovalFixture registers a synthetic approval endpoint for browser
 	// tests. Off by default and never for a real deployment.
 	ApprovalFixture bool
+	// VAPIDKeyFile is created once, mode 0600. Only the public half is ever
+	// returned to the browser.
+	VAPIDKeyFile string
+	VAPIDSubject string
 }
 
 // Load reads IRIS_* variables, validates them, and refuses clearly when a
@@ -53,6 +59,8 @@ func Load() (*Config, error) {
 		HermesKeyFile: envOr("IRIS_HERMES_KEY_FILE", DefaultHermesKeyFile),
 		VoiceURL:      strings.TrimRight(envOr("IRIS_VOICE_URL", DefaultVoiceURL), "/"),
 		Passphrase:    os.Getenv("IRIS_PASSPHRASE"),
+		VAPIDKeyFile:  envOr("IRIS_VAPID_KEY_FILE", DefaultVAPIDKeyFile),
+		VAPIDSubject:  envOr("IRIS_VAPID_SUBJECT", DefaultVAPIDSubject),
 	}
 
 	secure, err := parseBool(os.Getenv("IRIS_COOKIE_SECURE"))
@@ -91,6 +99,12 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("IRIS_WEB_DIR is not a usable path: %w", err)
 	}
 	cfg.WebDir = webDir
+
+	vapidPath, err := ExpandHome(cfg.VAPIDKeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("IRIS_VAPID_KEY_FILE is not a usable path: %w", err)
+	}
+	cfg.VAPIDKeyFile = vapidPath
 
 	keyPath, err := ExpandHome(cfg.HermesKeyFile)
 	if err != nil {

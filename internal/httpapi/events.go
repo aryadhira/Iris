@@ -36,16 +36,31 @@ func (h *roomHub) subscribe(roomID uuid.UUID) (<-chan roomEvent, func()) {
 	h.subs[roomID][ch] = struct{}{}
 	h.mu.Unlock()
 
+	var once sync.Once
 	return ch, func() {
-		h.mu.Lock()
-		if set, ok := h.subs[roomID]; ok {
-			delete(set, ch)
-			if len(set) == 0 {
-				delete(h.subs, roomID)
+		once.Do(func() {
+			h.mu.Lock()
+			if set, ok := h.subs[roomID]; ok {
+				delete(set, ch)
+				if len(set) == 0 {
+					delete(h.subs, roomID)
+				}
 			}
-		}
-		h.mu.Unlock()
+			h.mu.Unlock()
+		})
 	}
+}
+
+// count reports how many SSE clients are attached to a room right now. It is
+// what decides whether a finished run needs a push: a phone that is already
+// watching does not need a notification.
+func (h *roomHub) count(roomID uuid.UUID) int {
+	if h == nil {
+		return 0
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.subs[roomID])
 }
 
 // publish never blocks a turn. A slow tab loses the frame rather than stalling

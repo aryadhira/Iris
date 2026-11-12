@@ -1,0 +1,44 @@
+[
+  {
+    "scope": "390",
+    "name": "parser-created reminder shows a toast",
+    "pass": true,
+    "detail": "Pengingat dibuat untuk 14.38",
+    "at": "2026-11-12T07:37:49.759Z"
+  },
+  {
+    "scope": "390",
+    "name": "inspector lists the pending reminder",
+    "pass": true,
+    "detail": "{\"text\":\"rapat p7\\n\\nKam, 12 Nov, 14.38\",\"rows\":1,\"width\":390,\"viewport\":390,\"push\":\"Notifikasi belum aktif di perangkat ini\",\"hasToggle\":true}",
+    "at": "2026-11-12T07:37:50.333Z"
+  },
+  {
+    "scope": "390",
+    "name": "inspector fits the phone width",
+    "pass": true,
+    "detail": "390/390",
+    "at": "2026-11-12T07:37:50.333Z"
+  },
+  {
+    "scope": "390",
+    "name": "notification control is present",
+    "pass": true,
+    "detail": "Notifikasi belum aktif di perangkat ini",
+    "at": "2026-11-12T07:37:50.333Z"
+  },
+  {
+    "scope": "390",
+    "name": "push state resolves instead of hanging",
+    "pass": true,
+    "detail": "Notifikasi belum aktif di perangkat ini",
+    "at": "2026-11-12T07:37:50.333Z"
+  },
+  {
+    "scope": "390",
+    "name": "cancel removes the reminder from the list",
+    "pass": true,
+    "detail": "{\"rows\":0,\"empty\":\"Belum ada pengingat\\n\\nKetik di composer, misalnya “ingatkan saya jam 3 untuk rapat”. Pengingat muncul di sini dan bisa dibatalkan.\"}",
+    "at": "2026-11-12T07:37:51.085Z"
+  }
+]

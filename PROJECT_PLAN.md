@@ -14,6 +14,7 @@ a task keeps running until it is done or the agent asks a question.
 | **P4 — voice** | Push-to-talk, editable transcript, summary TTS, barge-in | On a phone over HTTPS: hold, speak, review, send; reply is spoken as ≤2 sentences without markdown |
 | **P5 — hardening** ✅ | systemd units, Tailscale HTTPS, backups, search, export, cost meter | Reboot the machine: Iris is up, rooms intact, backup restores in one command |
 | **P6 — approvals + stop** ✅ | Inline approval cards with Hermes' offered choices, run identity, real stop, expiry receipts | `once` continues the turn, `deny` ends it without a retry, a 120 s job stopped ends `cancelled` with a system note and no continuation |
+| **P7 — notify + reminders + off-site** ✅ | Web Push, typed Indonesian reminders, backup replication, boot receipt | A typed reminder fires within 35 s of due; a missed one fires once with `(terlambat)`; a detached run pushes and an attached one does not; a configured backup is proved or fails; the bootcheck writes its receipt |
 
 P4 is built and measured in Chromium with a synthetic but real-speech microphone (see
 `changelogs/2026-11-12-p4-voice.md`). The phone-over-HTTPS half of its exit criterion is still open until a

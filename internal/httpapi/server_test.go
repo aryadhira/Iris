@@ -36,6 +36,8 @@ type fakeStore struct {
 	continuations []store.Continuation
 	approvals     []store.Approval
 	runs          map[string]store.Run
+	reminders     []store.Reminder
+	pushSubs      []store.PushSubscription
 
 	createRoomCalls int
 	lastRoomArg     store.CreateRoomParams
@@ -636,6 +638,139 @@ func (f *fakeStore) CountPendingApprovalsByRoom(_ context.Context, expiresAt tim
 		out = append(out, store.CountPendingApprovalsByRoomRow{RoomID: roomID, Count: count})
 	}
 	return out, nil
+}
+
+func (f *fakeStore) CreateReminder(_ context.Context, arg store.CreateReminderParams) (store.Reminder, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	row := store.Reminder{
+		ID:        arg.ID,
+		RoomID:    arg.RoomID,
+		Text:      arg.Text,
+		DueAt:     arg.DueAt,
+		State:     "pending",
+		CreatedAt: time.Now(),
+	}
+	f.reminders = append(f.reminders, row)
+	return row, nil
+}
+
+func (f *fakeStore) ListPendingReminders(_ context.Context, roomID uuid.UUID) ([]store.Reminder, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]store.Reminder, 0)
+	for _, row := range f.reminders {
+		if row.RoomID == roomID && row.State == "pending" {
+			out = append(out, row)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) CancelReminder(_ context.Context, arg store.CancelReminderParams) (store.Reminder, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.reminders {
+		row := &f.reminders[i]
+		if row.ID == arg.ID && row.RoomID == arg.RoomID && row.State == "pending" {
+			row.State = "cancelled"
+			return *row, nil
+		}
+	}
+	return store.Reminder{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) ListDueReminders(_ context.Context, arg store.ListDueRemindersParams) ([]store.Reminder, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]store.Reminder, 0)
+	for _, row := range f.reminders {
+		if row.State != "pending" || row.DueAt.After(arg.DueAt) {
+			continue
+		}
+		out = append(out, row)
+		if len(out) >= int(arg.RowLimit) {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) FireReminder(_ context.Context, arg store.FireReminderParams) (store.Message, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var due store.Reminder
+	found := false
+	for i := range f.reminders {
+		row := &f.reminders[i]
+		if row.ID == arg.ReminderID && row.State == "pending" {
+			row.State = "fired"
+			row.FiredAt = arg.FiredAt
+			due = *row
+			found = true
+			break
+		}
+	}
+	if !found {
+		return store.Message{}, pgx.ErrNoRows
+	}
+	created := time.Now()
+	if arg.FiredAt != nil {
+		created = *arg.FiredAt
+	}
+	message := store.Message{
+		ID:        arg.MessageID,
+		RoomID:    due.RoomID,
+		Role:      "system",
+		Body:      arg.Body,
+		Meta:      []byte("{}"),
+		CreatedAt: created,
+	}
+	f.messages = append(f.messages, message)
+	return message, nil
+}
+
+func (f *fakeStore) ListPushSubscriptions(context.Context) ([]store.PushSubscription, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]store.PushSubscription(nil), f.pushSubs...), nil
+}
+
+func (f *fakeStore) UpsertPushSubscription(_ context.Context, arg store.UpsertPushSubscriptionParams) (store.PushSubscription, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.pushSubs {
+		if f.pushSubs[i].Endpoint == arg.Endpoint {
+			f.pushSubs[i].RoomID = arg.RoomID
+			f.pushSubs[i].P256dh = arg.P256dh
+			f.pushSubs[i].Auth = arg.Auth
+			f.pushSubs[i].UpdatedAt = time.Now()
+			return f.pushSubs[i], nil
+		}
+	}
+	now := time.Now()
+	row := store.PushSubscription{
+		ID: arg.ID, RoomID: arg.RoomID, Endpoint: arg.Endpoint,
+		P256dh: arg.P256dh, Auth: arg.Auth, CreatedAt: now, UpdatedAt: now,
+	}
+	f.pushSubs = append(f.pushSubs, row)
+	return row, nil
+}
+
+func (f *fakeStore) DeletePushSubscription(_ context.Context, endpoint string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	kept := f.pushSubs[:0]
+	var removed int64
+	for _, row := range f.pushSubs {
+		if row.Endpoint == endpoint {
+			removed++
+			continue
+		}
+		kept = append(kept, row)
+	}
+	f.pushSubs = kept
+	return removed, nil
 }
 
 func (f *fakeStore) approvalsFor(roomID uuid.UUID) []store.Approval {

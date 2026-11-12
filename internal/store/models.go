@@ -72,6 +72,26 @@ type Message struct {
 	SearchVector []byte
 }
 
+type PushSubscription struct {
+	ID        uuid.UUID
+	RoomID    uuid.UUID
+	Endpoint  string
+	P256dh    string
+	Auth      string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type Reminder struct {
+	ID        uuid.UUID
+	RoomID    uuid.UUID
+	Text      string
+	DueAt     time.Time
+	State     string
+	CreatedAt time.Time
+	FiredAt   *time.Time
+}
+
 type Room struct {
 	ID              uuid.UUID
 	Name            string

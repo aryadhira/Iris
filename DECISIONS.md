@@ -106,3 +106,28 @@ cancels the chain; a later continuation cannot resurrect it.
 (`internal/hermes/sse.go`) with a captured-event test. The browser never sees the API key or `request_id`.
 Expiry depends on `IRIS_APPROVAL_TIMEOUT` matching the gateway's `approvals.timeout`; the acceptance script
 reads the gateway's value instead of hard-coding it.
+
+## ADR-008 — Reminders and push belong to Iris; off-site proof is mandatory
+
+**Status:** accepted (2026-11-13)
+
+**Context.** Hermes cannot wake an API session for a timer (ADR-003), and a phone that is not looking
+at the room needs a notification. A reminder that fires twice is worse than one that is late; a
+backup that was never copied is not a backup. Reboot survival has been claimed but never measured.
+
+**Decision.**
+1. Reminders are a Postgres row owned by a room. A pure Indonesian parser creates one only when the
+   sentence names an explicit time. The 30 s scheduler is DB-derived, and `FireReminder` marks the row
+   and inserts its system message atomically. A row due before process start fires once with
+   `(terlambat …)`.
+2. Web Push uses a locally generated VAPID keypair (`~/.config/iris/vapid.json`, 0600), a hand-written
+   service worker, and `aes128gcm` + VAPID ES256. Push is sent when nobody is attached to the room, on
+   every pending approval, and when a reminder fires; one push per room per 30 s except approvals.
+3. `IRIS_BACKUP_TARGET` is opt-in. A configured copy must be proved (remote listing or Telegram
+   `ok:true`); failure exits non-zero and the manifest says `offsite=false`. Unset is local-only.
+4. A bootcheck oneshot records `{boot_id, at, health, schema, voice}` after every boot.
+
+**Consequences.** iOS needs the PWA on the home screen and Android needs the installed app; neither
+can be proven from this machine. A real phone and a real reboot remain Boss' measurements. A push
+library upgrade is one dependency, pinned and reported in the changelog. The bootcheck service must
+be enabled by `deploy/install.sh` and requires linger to run without a login session.

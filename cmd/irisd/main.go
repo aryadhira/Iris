@@ -20,9 +20,10 @@ import (
 	"github.com/aryadhira/iris/internal/httpapi"
 	"github.com/aryadhira/iris/internal/store"
 	irisvoice "github.com/aryadhira/iris/internal/voice"
+	"github.com/aryadhira/iris/internal/webpush"
 )
 
-const version = "0.1.0-p6"
+const version = "0.1.0-p7"
 
 func main() {
 	if err := run(); err != nil {
@@ -67,6 +68,18 @@ func run() error {
 	hermesClient := hermes.New(cfg.HermesURL, cfg.HermesKey, logger)
 	voiceClient := irisvoice.New(cfg.VoiceURL, logger)
 
+	var schemaVersion string
+	if err := pool.QueryRow(bootCtx, "SELECT COALESCE(max(version), 0)::text FROM schema_migrations").Scan(&schemaVersion); err != nil {
+		logger.Warn("cannot read schema version", "error", err)
+	}
+
+	var pushNotifier httpapi.PushNotifier
+	if pushService, err := webpush.New(cfg.VAPIDKeyFile, cfg.VAPIDSubject, queries, logger); err != nil {
+		logger.Error("web push disabled; the keypair could not be prepared", "error", err)
+	} else {
+		pushNotifier = pushService
+	}
+
 	e := httpapi.New(httpapi.Options{
 		Store:            queries,
 		Hermes:           hermesClient,
@@ -80,6 +93,9 @@ func run() error {
 		RunApprovals:     true,
 		ApprovalTimeout:  cfg.ApprovalTimeout,
 		ApprovalFixture:  cfg.ApprovalFixture,
+		SchemaVersion:    schemaVersion,
+		Push:             pushNotifier,
+		RunReminders:     true,
 	})
 
 	srv := &http.Server{
