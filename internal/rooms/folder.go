@@ -17,6 +17,14 @@ const (
 	outboxName = "outbox"
 )
 
+// ContinuityPrompt is the part of the room contract that keeps a job from
+// being forgotten. It is prepended to every turn (ADR-003, wait in-turn is the
+// primary layer; the pump in irisd is only the safety net).
+const ContinuityPrompt = `Kalau kamu memulai pekerjaan panjang, utamakan menunggu di turn ini dengan process_manage wait lalu laporkan hasilnya — turn yang lama tidak apa-apa.
+Kalau kamu sengaja membiarkannya berjalan, sebutkan persis apa yang berjalan dan kapan selesainya.
+Akhiri balasan dengan satu baris: STATUS: RUNNING — <apa dan berapa lama>, STATUS: DONE — <hasil>, atau STATUS: BLOCKED — <yang kamu butuhkan>.
+Jangan pernah mengaku selesai selama pekerjaan yang kamu mulai masih berjalan.`
+
 // ErrUnsafePath is returned when a path would leave its room folder.
 var ErrUnsafePath = errors.New("path escapes the room folder")
 
@@ -71,7 +79,23 @@ func (f Folder) SystemPrompt() string {
 		"Akhiri balasanmu dengan satu baris [[artifact: outbox/<nama>]] untuk setiap file yang harus Boss terima.",
 		"Jangan menulis di luar folder room ini.",
 		"Jawab dalam bahasa yang Boss pakai. Kalau Boss menulis bahasa Indonesia, jawab bahasa Indonesia — jangan dicampur.",
+		ContinuityPrompt,
 	}, "\n")
+}
+
+// TurnInstructions returns the prompt sent to Hermes for one turn. Rooms
+// created before P3 have a stored contract without the continuity lines, so
+// the four lines are appended when missing instead of silently not applying to
+// every existing room.
+func TurnInstructions(stored string) string {
+	stored = strings.TrimSpace(stored)
+	if strings.Contains(stored, "STATUS: RUNNING") {
+		return stored
+	}
+	if stored == "" {
+		return ContinuityPrompt
+	}
+	return stored + "\n" + ContinuityPrompt
 }
 
 // Resolve turns a relative room path into an absolute path, refusing anything

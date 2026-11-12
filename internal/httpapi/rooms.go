@@ -129,6 +129,7 @@ func (s *Server) archiveRoom(c echo.Context) error {
 		s.logger.Error("cannot archive room", "error", err)
 		return c.JSON(http.StatusInternalServerError, errorBody("Iris could not archive that room."))
 	}
+	s.cancelRoomContinuations(c.Request().Context(), row.ID, "room diarsipkan", "lanjut otomatis dibatalkan — room diarsipkan.")
 	return c.JSON(http.StatusOK, map[string]any{"room": viewRoom(row)})
 }
 

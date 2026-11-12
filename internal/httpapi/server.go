@@ -4,6 +4,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -28,6 +29,19 @@ type Store interface {
 
 	InsertMessage(ctx context.Context, arg store.InsertMessageParams) (store.Message, error)
 	ListMessages(ctx context.Context, arg store.ListMessagesParams) ([]store.Message, error)
+	GetMessage(ctx context.Context, id uuid.UUID) (store.Message, error)
+	GetLatestAssistantMessage(ctx context.Context, roomID uuid.UUID) (store.Message, error)
+
+	CreateContinuation(ctx context.Context, arg store.CreateContinuationParams) (store.Continuation, error)
+	GetContinuation(ctx context.Context, id uuid.UUID) (store.Continuation, error)
+	ListPendingContinuations(ctx context.Context, roomID uuid.UUID) ([]store.Continuation, error)
+	ListContinuationsForChain(ctx context.Context, chainID uuid.UUID) ([]store.Continuation, error)
+	CountContinuationsForChain(ctx context.Context, chainID uuid.UUID) (int64, error)
+	ClaimDueContinuations(ctx context.Context, arg store.ClaimDueContinuationsParams) ([]store.Continuation, error)
+	FinishContinuation(ctx context.Context, arg store.FinishContinuationParams) (store.Continuation, error)
+	CancelPendingContinuationsForRoom(ctx context.Context, arg store.CancelPendingContinuationsForRoomParams) ([]store.Continuation, error)
+	ResumeRunningContinuations(ctx context.Context) ([]store.Continuation, error)
+	HasNewerUserMessage(ctx context.Context, arg store.HasNewerUserMessageParams) (bool, error)
 
 	InsertFile(ctx context.Context, arg store.InsertFileParams) (store.File, error)
 	GetFile(ctx context.Context, id uuid.UUID) (store.File, error)
@@ -44,16 +58,24 @@ type Server struct {
 	logger  *slog.Logger
 	version string
 	dataDir string
+
+	// now and continuationInterval are seams for the pump's tests: a fake
+	// clock must be able to cross the 30 minute cap without sleeping.
+	now                  func() time.Time
+	continuationInterval time.Duration
 }
 
 // Options configures a Server.
 type Options struct {
-	Store   Store
-	Hermes  hermes.Client
-	Auth    *auth.Service
-	Logger  *slog.Logger
-	Version string
-	DataDir string
+	Store                Store
+	Hermes               hermes.Client
+	Auth                 *auth.Service
+	Logger               *slog.Logger
+	Version              string
+	DataDir              string
+	Now                  func() time.Time
+	ContinuationInterval time.Duration
+	RunContinuations     bool
 }
 
 // New builds the Echo application with all routes registered.
@@ -69,6 +91,14 @@ func New(opts Options) *echo.Echo {
 		logger:  logger,
 		version: opts.Version,
 		dataDir: opts.DataDir,
+		now:     opts.Now,
+	}
+	if s.now == nil {
+		s.now = time.Now
+	}
+	s.continuationInterval = opts.ContinuationInterval
+	if s.continuationInterval == 0 {
+		s.continuationInterval = time.Second
 	}
 
 	e := echo.New()
@@ -90,11 +120,17 @@ func New(opts Options) *echo.Echo {
 	e.PATCH("/api/rooms/:id/prompt", s.updateRoomPrompt)
 	e.GET("/api/rooms/:id/messages", s.listMessages)
 	e.POST("/api/rooms/:id/messages", s.streamMessage)
+	e.GET("/api/rooms/:id/continuation", s.getContinuation)
+	e.POST("/api/rooms/:id/continuation/cancel", s.cancelContinuation)
 	e.GET("/api/rooms/:id/files", s.listRoomFiles)
 	e.POST("/api/rooms/:id/uploads", s.uploadFile)
 
 	e.GET("/api/files/:id", s.downloadFile)
 	e.DELETE("/api/files/:id", s.deleteFile)
+
+	if opts.RunContinuations {
+		s.StartContinuations(context.Background())
+	}
 
 	return e
 }
@@ -214,6 +250,7 @@ type messageView struct {
 	Role        string           `json:"role"`
 	Body        string           `json:"body"`
 	RunID       *string          `json:"run_id,omitempty"`
+	Meta        json.RawMessage  `json:"meta,omitempty"`
 	Attachments []attachmentView `json:"attachments"`
 	CreatedAt   time.Time        `json:"created_at"`
 }
@@ -223,12 +260,17 @@ func viewMessage(m store.Message, attachments []store.File) messageView {
 	for _, f := range attachments {
 		views = append(views, viewAttachment(f))
 	}
+	var meta json.RawMessage
+	if len(m.Meta) > 0 && string(m.Meta) != "{}" && string(m.Meta) != "null" {
+		meta = json.RawMessage(m.Meta)
+	}
 	return messageView{
 		ID:          m.ID.String(),
 		RoomID:      m.RoomID.String(),
 		Role:        m.Role,
 		Body:        m.Body,
 		RunID:       m.RunID,
+		Meta:        meta,
 		Attachments: views,
 		CreatedAt:   m.CreatedAt,
 	}

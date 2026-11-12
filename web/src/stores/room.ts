@@ -3,12 +3,20 @@ import { api } from '../lib/api'
 import { humanizeServerError } from '../lib/errors'
 import { mergeStored } from '../lib/merge'
 import { frameJson, SseParser, type SseFrame } from '../lib/sse'
-import type { ChatMessage, FileAttachment, StoredMessage, TurnPhase } from '../lib/types'
+import type {
+  ChatMessage,
+  Continuation,
+  FileAttachment,
+  StoredMessage,
+  TurnPhase,
+} from '../lib/types'
 
 const PAGE_SIZE = 200
 
 export interface RoomStoreDeps {
   listMessages: (roomId: string, before?: string) => Promise<StoredMessage[]>
+  getContinuation: (roomId: string) => Promise<Continuation | null>
+  cancelContinuation: (roomId: string) => Promise<{ cancelled: number }>
   sendMessage: (
     roomId: string,
     text: string,
@@ -22,6 +30,8 @@ export interface RoomStoreDeps {
 
 export const liveDeps: RoomStoreDeps = {
   listMessages: (roomId, before) => api.listMessages(roomId, { before, limit: PAGE_SIZE }),
+  getContinuation: (roomId) => api.getContinuation(roomId),
+  cancelContinuation: (roomId) => api.cancelContinuation(roomId),
   sendMessage: (roomId, text, attachmentIds, signal) =>
     api.sendMessage(roomId, text, attachmentIds, signal),
   sleep: (ms) => new Promise((resolve) => window.setTimeout(resolve, ms)),
@@ -68,6 +78,9 @@ export function createRoomStore(
     errorText: '',
     connectionLost: false,
 
+    continuation: null as Continuation | null,
+    continuationError: '',
+
     draft: '',
     archived: options.archived ?? false,
   })
@@ -105,6 +118,7 @@ export function createRoomStore(
       state.messages = mergeStored([], oldestFirst(rows))
       state.canLoadOlder = rows.length >= PAGE_SIZE
       state.loaded = true
+      await refreshContinuation()
     } catch {
       state.loadError = 'Iris tidak bisa memuat pesan room ini. Coba lagi.'
     } finally {
@@ -125,6 +139,35 @@ export function createRoomStore(
       state.loadError = 'Pesan lama tidak bisa dimuat. Coba lagi.'
     } finally {
       state.loadingOlder = false
+    }
+  }
+
+  /**
+   * Read the pending follow-up. A row that disappears means the pump ran,
+   * was cancelled, or hit a bound; re-reading the mirror is what makes that
+   * visible without a manual reload.
+   */
+  async function refreshContinuation(): Promise<void> {
+    try {
+      const previous = state.continuation
+      const next = await d.getContinuation(roomId)
+      state.continuation = next
+      state.continuationError = ''
+      if (previous && !next) await reconcile()
+    } catch {
+      state.continuationError = 'Status lanjutan tidak bisa dibaca.'
+    }
+  }
+
+  /** "hentikan": stop the chain now, visibly. */
+  async function stopContinuation(): Promise<void> {
+    state.continuationError = ''
+    try {
+      await d.cancelContinuation(roomId)
+      state.continuation = null
+      await reconcile()
+    } catch {
+      state.continuationError = 'Lanjutan otomatis tidak bisa dihentikan. Coba lagi.'
     }
   }
 
@@ -191,6 +234,7 @@ export function createRoomStore(
     // chips while the reply streams.
     onAccepted?.()
     await consume(response)
+    await refreshContinuation()
   }
 
   async function consume(response: Response): Promise<void> {
@@ -410,6 +454,8 @@ export function createRoomStore(
     state,
     load,
     loadOlder,
+    refreshContinuation,
+    stopContinuation,
     send,
     reload,
     dispose,

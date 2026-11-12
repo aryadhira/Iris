@@ -17,6 +17,20 @@ type AuthSession struct {
 	UserAgent string
 }
 
+type Continuation struct {
+	ID         uuid.UUID
+	RoomID     uuid.UUID
+	ChainID    uuid.UUID
+	Attempt    int32
+	Status     string
+	Reason     string
+	DueAt      time.Time
+	Deadline   time.Time
+	StartedAt  *time.Time
+	FinishedAt *time.Time
+	CreatedAt  time.Time
+}
+
 type File struct {
 	ID        uuid.UUID
 	RoomID    uuid.UUID
@@ -37,6 +51,7 @@ type Message struct {
 	Body      string
 	RunID     *string
 	CreatedAt time.Time
+	Meta      []byte
 }
 
 type Room struct {

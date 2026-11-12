@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS continuations;
+ALTER TABLE messages DROP COLUMN IF EXISTS meta;

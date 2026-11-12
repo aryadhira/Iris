@@ -33,6 +33,8 @@ type fakeStore struct {
 	order    []uuid.UUID
 	sessions map[string]store.AuthSession
 
+	continuations []store.Continuation
+
 	createRoomCalls int
 	lastRoomArg     store.CreateRoomParams
 	failCreateRoom  error
@@ -193,6 +195,7 @@ func (f *fakeStore) InsertMessage(_ context.Context, arg store.InsertMessagePara
 		Role:      arg.Role,
 		Body:      arg.Body,
 		RunID:     arg.RunID,
+		Meta:      arg.Meta,
 		CreatedAt: time.Now(),
 	}
 	f.messages = append(f.messages, row)
@@ -217,6 +220,190 @@ func (f *fakeStore) ListMessages(_ context.Context, arg store.ListMessagesParams
 		}
 	}
 	return out, nil
+}
+
+func (f *fakeStore) GetMessage(_ context.Context, id uuid.UUID) (store.Message, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, row := range f.messages {
+		if row.ID == id {
+			return row, nil
+		}
+	}
+	return store.Message{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) GetLatestAssistantMessage(_ context.Context, roomID uuid.UUID) (store.Message, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := len(f.messages) - 1; i >= 0; i-- {
+		row := f.messages[i]
+		if row.RoomID == roomID && row.Role == "assistant" {
+			return row, nil
+		}
+	}
+	return store.Message{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) CreateContinuation(_ context.Context, arg store.CreateContinuationParams) (store.Continuation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, row := range f.continuations {
+		if row.ChainID == arg.ChainID && row.Attempt == arg.Attempt {
+			return store.Continuation{}, errors.New("duplicate chain attempt")
+		}
+	}
+	row := store.Continuation{
+		ID:        arg.ID,
+		RoomID:    arg.RoomID,
+		ChainID:   arg.ChainID,
+		Attempt:   arg.Attempt,
+		Status:    "pending",
+		DueAt:     arg.DueAt,
+		Deadline:  arg.Deadline,
+		CreatedAt: time.Now(),
+	}
+	f.continuations = append(f.continuations, row)
+	return row, nil
+}
+
+func (f *fakeStore) GetContinuation(_ context.Context, id uuid.UUID) (store.Continuation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, row := range f.continuations {
+		if row.ID == id {
+			return row, nil
+		}
+	}
+	return store.Continuation{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) ListPendingContinuations(_ context.Context, roomID uuid.UUID) ([]store.Continuation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]store.Continuation, 0)
+	for _, row := range f.continuations {
+		if row.RoomID == roomID && (row.Status == "pending" || row.Status == "running") {
+			out = append(out, row)
+		}
+	}
+	sortContinuations(out)
+	return out, nil
+}
+
+func (f *fakeStore) ListContinuationsForChain(_ context.Context, chainID uuid.UUID) ([]store.Continuation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]store.Continuation, 0)
+	for _, row := range f.continuations {
+		if row.ChainID == chainID {
+			out = append(out, row)
+		}
+	}
+	sortContinuations(out)
+	return out, nil
+}
+
+func (f *fakeStore) CountContinuationsForChain(_ context.Context, chainID uuid.UUID) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var count int64
+	for _, row := range f.continuations {
+		if row.ChainID == chainID {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (f *fakeStore) ClaimDueContinuations(_ context.Context, arg store.ClaimDueContinuationsParams) ([]store.Continuation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]store.Continuation, 0)
+	for i := range f.continuations {
+		row := &f.continuations[i]
+		if row.Status != "pending" {
+			continue
+		}
+		if arg.StartedAt != nil && row.DueAt.After(*arg.StartedAt) {
+			continue
+		}
+		started := time.Now()
+		if arg.StartedAt != nil {
+			started = *arg.StartedAt
+		}
+		row.Status = "running"
+		row.StartedAt = &started
+		out = append(out, *row)
+		if len(out) >= int(arg.Limit) {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) FinishContinuation(_ context.Context, arg store.FinishContinuationParams) (store.Continuation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.continuations {
+		if f.continuations[i].ID == arg.ID {
+			f.continuations[i].Status = arg.Status
+			f.continuations[i].Reason = arg.Reason
+			f.continuations[i].FinishedAt = arg.FinishedAt
+			return f.continuations[i], nil
+		}
+	}
+	return store.Continuation{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) CancelPendingContinuationsForRoom(_ context.Context, arg store.CancelPendingContinuationsForRoomParams) ([]store.Continuation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]store.Continuation, 0)
+	for i := range f.continuations {
+		row := &f.continuations[i]
+		if row.RoomID != arg.RoomID || (row.Status != "pending" && row.Status != "running") {
+			continue
+		}
+		row.Status = "cancelled"
+		row.Reason = arg.Reason
+		row.FinishedAt = arg.FinishedAt
+		out = append(out, *row)
+	}
+	return out, nil
+}
+
+func (f *fakeStore) ResumeRunningContinuations(_ context.Context) ([]store.Continuation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]store.Continuation, 0)
+	for i := range f.continuations {
+		if f.continuations[i].Status == "running" {
+			f.continuations[i].Status = "pending"
+			f.continuations[i].StartedAt = nil
+			out = append(out, f.continuations[i])
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) HasNewerUserMessage(_ context.Context, arg store.HasNewerUserMessageParams) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, row := range f.messages {
+		if row.RoomID == arg.RoomID && row.Role == "user" && row.CreatedAt.After(arg.CreatedAt) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func sortContinuations(rows []store.Continuation) {
+	for i := 1; i < len(rows); i++ {
+		for j := i; j > 0 && rows[j].DueAt.Before(rows[j-1].DueAt); j-- {
+			rows[j], rows[j-1] = rows[j-1], rows[j]
+		}
+	}
 }
 
 func (f *fakeStore) CreateAuthSession(_ context.Context, arg store.CreateAuthSessionParams) error {
@@ -273,6 +460,7 @@ type fakeHermes struct {
 
 	events       []hermes.Event
 	streamErr    error
+	streamCalls  int
 	lastText     string
 	instructions string
 	onStream     func(ctx context.Context, emit func(hermes.Event) error) error
@@ -298,6 +486,7 @@ func (f *fakeHermes) DeleteSession(_ context.Context, sessionID string) error {
 
 func (f *fakeHermes) StreamChat(ctx context.Context, _ string, text, instructions string, onEvent func(hermes.Event) error) error {
 	f.mu.Lock()
+	f.streamCalls++
 	f.lastText = text
 	f.instructions = instructions
 	f.mu.Unlock()

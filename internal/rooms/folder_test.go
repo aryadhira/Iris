@@ -76,6 +76,38 @@ func TestResolveRejectsAnythingOutsideTheRoom(t *testing.T) {
 	}
 }
 
+func TestContinuityContractIsOnEveryTurn(t *testing.T) {
+	folder, err := Create(t.TempDir(), uuid.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt := folder.SystemPrompt()
+	for _, want := range []string{
+		"process_manage wait",
+		"STATUS: RUNNING",
+		"STATUS: DONE",
+		"STATUS: BLOCKED",
+		"Jangan pernah mengaku selesai",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("SystemPrompt is missing %q", want)
+		}
+	}
+
+	// A room created before P3 has a stored contract without the new lines.
+	old := "Kamu adalah Hermes, bekerja di dalam room Iris ini.\nFolder room ini: /tmp/x."
+	turn := TurnInstructions(old)
+	if !strings.Contains(turn, old) || !strings.Contains(turn, ContinuityPrompt) {
+		t.Fatalf("TurnInstructions did not append the contract: %q", turn)
+	}
+	if strings.Count(turn, ContinuityPrompt) != 1 {
+		t.Fatalf("continuity contract appears more than once")
+	}
+	if got := TurnInstructions(prompt); got != prompt {
+		t.Fatalf("TurnInstructions duplicated a contract that already has it")
+	}
+}
+
 func TestSanitizeFilenameNeverLeavesAPath(t *testing.T) {
 	cases := map[string]string{
 		"../../etc/passwd":      "passwd",

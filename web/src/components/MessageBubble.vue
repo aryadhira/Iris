@@ -12,6 +12,7 @@ import BrandMark from './BrandMark.vue'
 import FileIcon from './FileIcon.vue'
 import FileLightbox from './FileLightbox.vue'
 import FormattedText from './FormattedText.vue'
+import RunTimeline from './RunTimeline.vue'
 import { fileKind, fileTypeLabel, fileUrl, formatBytes, isImage } from '../lib/files'
 import type { ChatMessage, FileAttachment } from '../lib/types'
 
@@ -126,6 +127,7 @@ const time = computed(() => {
       <div v-if="artifacts.length > 0" class="mt-2 space-y-1.5" data-testid="artifact-list">
         <ArtifactCard v-for="file in artifacts" :key="file.id" :file="file" />
       </div>
+      <RunTimeline :meta="message.meta" />
       <p v-if="message.incomplete" class="mt-1.5 text-[12px] text-quiet">
         Balasan terputus — mungkin belum lengkap.
       </p>

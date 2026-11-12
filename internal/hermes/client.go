@@ -27,7 +27,10 @@ type Event struct {
 	Text         string
 	Name         string
 	Status       string
-	Raw          []byte
+	// TS is the gateway timestamp in Unix seconds when present. Tool durations
+	// come from the real stream clock, not from when irisd happened to read a line.
+	TS  float64
+	Raw []byte
 }
 
 // Client is the surface httpapi depends on. Tests use a fake implementation.

@@ -4,12 +4,14 @@ import { useRoute, useRouter } from 'vue-router'
 import { PhArrowLeft, PhFiles, PhList } from '@phosphor-icons/vue'
 import BrandMark from '../components/BrandMark.vue'
 import Composer from '../components/Composer.vue'
+import ContinuationLine from '../components/ContinuationLine.vue'
 import FileLibrary from '../components/FileLibrary.vue'
 import FormattedText from '../components/FormattedText.vue'
 import MessageBubble from '../components/MessageBubble.vue'
 import WorkingLine from '../components/WorkingLine.vue'
 import { ApiError, api } from '../lib/api'
 import { humanizeServerError } from '../lib/errors'
+import { roomState } from '../lib/timeline'
 import type { Room, TurnPhase } from '../lib/types'
 import { createAttachmentStore, type AttachmentStore } from '../stores/attachments'
 import { createRoomStore, type RoomStore } from '../stores/room'
@@ -57,6 +59,44 @@ const draft = computed({
 const hasDraft = computed(() => draft.value.trim() !== '')
 const pendingAttachments = computed(() => attachments.value?.state.items ?? [])
 const uploadBlock = computed(() => attachments.value?.blockReason ?? '')
+const continuation = computed(() => store.value?.state.continuation ?? null)
+const continuationError = computed(() => store.value?.state.continuationError ?? '')
+const lastAssistant = computed(() => {
+  for (let i = messages.value.length - 1; i >= 0; i -= 1) {
+    if (messages.value[i].role === 'assistant') return messages.value[i]
+  }
+  return undefined
+})
+const stateChip = computed(() =>
+  roomState(isWorking.value, Boolean(continuation.value), lastAssistant.value?.meta?.statusLine),
+)
+const stateChipLabel = computed(
+  () =>
+    ({
+      idle: 'idle',
+      working: 'bekerja',
+      waiting: 'menunggu proses',
+      'needs-you': 'butuh kamu',
+    })[stateChip.value],
+)
+const stateChipClass = computed(() => {
+  switch (stateChip.value) {
+    case 'working':
+      return 'border-orchid/40 text-orchid'
+    case 'waiting':
+      return 'border-line bg-surface text-muted'
+    case 'needs-you':
+      return 'border-violet/60 bg-violet/20 text-ink'
+    default:
+      return 'border-line text-quiet'
+  }
+})
+
+let continuationTimer: number | undefined
+
+async function stopContinuation(): Promise<void> {
+  await store.value?.stopContinuation()
+}
 
 function onScroll(): void {
   const element = scroller.value
@@ -196,11 +236,17 @@ onMounted(async () => {
     })
     contentObserver.observe(target)
   }
+  // The pump runs server-side; this only keeps the live line and the room
+  // honest when another tab (or the pump itself) changes the state.
+  continuationTimer = window.setInterval(() => {
+    void store.value?.refreshContinuation()
+  }, 4000)
 })
 
 onBeforeUnmount(() => {
   contentObserver?.disconnect()
   contentObserver = null
+  if (continuationTimer !== undefined) window.clearInterval(continuationTimer)
   store.value?.dispose()
 })
 </script>
@@ -247,6 +293,14 @@ onBeforeUnmount(() => {
             class="shrink-0 rounded-full border border-line px-2 py-0.5 text-[10.5px] leading-tight text-quiet"
           >
             Diarsipkan
+          </span>
+          <span
+            class="shrink-0 rounded-full border px-2 py-0.5 text-[10.5px] leading-tight"
+            :class="stateChipClass"
+            data-testid="room-state-chip"
+            :data-state="stateChip"
+          >
+            {{ stateChipLabel }}
           </span>
         </div>
         <p class="min-w-0 flex-1 truncate text-[11.5px] text-quiet">
@@ -371,6 +425,16 @@ onBeforeUnmount(() => {
                 />
               </div>
             </div>
+
+            <!-- A pending safety-net follow-up is live, not a black box. -->
+            <ContinuationLine
+              v-else-if="continuation"
+              :continuation="continuation"
+              @cancel="stopContinuation"
+            />
+            <p v-if="continuationError" class="text-[12px] text-quiet" role="alert">
+              {{ continuationError }}
+            </p>
 
             <p v-else-if="loaded && messages.length > 0" class="pt-3 text-center text-[11.5px] text-quiet">
               Hermes menjawab di sini. Riwayat tetap tersimpan meski kamu menutup room.

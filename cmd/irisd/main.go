@@ -21,7 +21,7 @@ import (
 	"github.com/aryadhira/iris/internal/store"
 )
 
-const version = "0.1.0-p2"
+const version = "0.1.0-p3"
 
 func main() {
 	if err := run(); err != nil {
@@ -66,12 +66,13 @@ func run() error {
 	hermesClient := hermes.New(cfg.HermesURL, cfg.HermesKey, logger)
 
 	e := httpapi.New(httpapi.Options{
-		Store:   queries,
-		Hermes:  hermesClient,
-		Auth:    authService,
-		Logger:  logger,
-		Version: version,
-		DataDir: cfg.DataDir,
+		Store:            queries,
+		Hermes:           hermesClient,
+		Auth:             authService,
+		Logger:           logger,
+		Version:          version,
+		DataDir:          cfg.DataDir,
+		RunContinuations: true,
 	})
 
 	srv := &http.Server{

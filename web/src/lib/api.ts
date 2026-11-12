@@ -1,4 +1,4 @@
-import type { FileAttachment, Room, RoomFile, StoredMessage } from './types'
+import type { Continuation, FileAttachment, Room, RoomFile, StoredMessage } from './types'
 
 export class ApiError extends Error {
   readonly status: number
@@ -116,6 +116,19 @@ export const api = {
       `/api/rooms/${encodeURIComponent(roomId)}/files`,
     )
     return body.files ?? []
+  },
+
+  async getContinuation(roomId: string): Promise<Continuation | null> {
+    const body = await request<{ continuation: Continuation | null }>(
+      `/api/rooms/${encodeURIComponent(roomId)}/continuation`,
+    )
+    return body.continuation ?? null
+  },
+
+  cancelContinuation(roomId: string): Promise<{ cancelled: number }> {
+    return request(`/api/rooms/${encodeURIComponent(roomId)}/continuation/cancel`, {
+      method: 'POST',
+    })
   },
 
   deleteFile(id: string): Promise<{ deleted: boolean }> {

@@ -12,10 +12,53 @@ import (
 	"github.com/google/uuid"
 )
 
+const getLatestAssistantMessage = `-- name: GetLatestAssistantMessage :one
+SELECT id, room_id, role, body, run_id, created_at, meta FROM messages
+WHERE room_id = $1
+  AND role = 'assistant'
+ORDER BY created_at DESC, id DESC
+LIMIT 1
+`
+
+func (q *Queries) GetLatestAssistantMessage(ctx context.Context, roomID uuid.UUID) (Message, error) {
+	row := q.db.QueryRow(ctx, getLatestAssistantMessage, roomID)
+	var i Message
+	err := row.Scan(
+		&i.ID,
+		&i.RoomID,
+		&i.Role,
+		&i.Body,
+		&i.RunID,
+		&i.CreatedAt,
+		&i.Meta,
+	)
+	return i, err
+}
+
+const getMessage = `-- name: GetMessage :one
+SELECT id, room_id, role, body, run_id, created_at, meta FROM messages
+WHERE id = $1
+`
+
+func (q *Queries) GetMessage(ctx context.Context, id uuid.UUID) (Message, error) {
+	row := q.db.QueryRow(ctx, getMessage, id)
+	var i Message
+	err := row.Scan(
+		&i.ID,
+		&i.RoomID,
+		&i.Role,
+		&i.Body,
+		&i.RunID,
+		&i.CreatedAt,
+		&i.Meta,
+	)
+	return i, err
+}
+
 const insertMessage = `-- name: InsertMessage :one
-INSERT INTO messages (id, room_id, role, body, run_id)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, room_id, role, body, run_id, created_at
+INSERT INTO messages (id, room_id, role, body, run_id, meta)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, room_id, role, body, run_id, created_at, meta
 `
 
 type InsertMessageParams struct {
@@ -24,6 +67,7 @@ type InsertMessageParams struct {
 	Role   string
 	Body   string
 	RunID  *string
+	Meta   []byte
 }
 
 func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (Message, error) {
@@ -33,6 +77,7 @@ func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (M
 		arg.Role,
 		arg.Body,
 		arg.RunID,
+		arg.Meta,
 	)
 	var i Message
 	err := row.Scan(
@@ -42,12 +87,13 @@ func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (M
 		&i.Body,
 		&i.RunID,
 		&i.CreatedAt,
+		&i.Meta,
 	)
 	return i, err
 }
 
 const listMessages = `-- name: ListMessages :many
-SELECT id, room_id, role, body, run_id, created_at FROM messages
+SELECT id, room_id, role, body, run_id, created_at, meta FROM messages
 WHERE room_id = $1
   AND created_at < COALESCE($2::timestamptz, 'infinity'::timestamptz)
 ORDER BY created_at DESC, id DESC
@@ -76,6 +122,7 @@ func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]M
 			&i.Body,
 			&i.RunID,
 			&i.CreatedAt,
+			&i.Meta,
 		); err != nil {
 			return nil, err
 		}

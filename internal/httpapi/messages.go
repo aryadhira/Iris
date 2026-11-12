@@ -21,9 +21,9 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/aryadhira/iris/internal/artifacts"
+	"github.com/aryadhira/iris/internal/continuation"
 	"github.com/aryadhira/iris/internal/files"
 	"github.com/aryadhira/iris/internal/hermes"
-	"github.com/aryadhira/iris/internal/rooms"
 	"github.com/aryadhira/iris/internal/store"
 )
 
@@ -139,6 +139,7 @@ func (s *Server) streamMessage(c echo.Context) error {
 		RoomID: room.ID,
 		Role:   "user",
 		Body:   text,
+		Meta:   []byte("{}"),
 	})
 	if err != nil {
 		s.logger.Error("cannot save user message", "error", err)
@@ -153,6 +154,15 @@ func (s *Server) streamMessage(c echo.Context) error {
 			s.logger.Error("cannot attach file to message", "error", err, "file_id", f.ID.String())
 		}
 	}
+
+	// Boss typed: the safety net must not talk over a live conversation. Any
+	// pending chain is cancelled now, visibly, before the new turn streams.
+	s.cancelRoomContinuations(
+		context.WithoutCancel(c.Request().Context()),
+		room.ID,
+		"ada pesan baru dari Boss",
+		"lanjut otomatis dibatalkan — ada pesan baru dari Boss.",
+	)
 
 	promptText := text
 	if len(attachments) > 0 {
@@ -182,9 +192,13 @@ func (s *Server) streamMessage(c echo.Context) error {
 	var gone atomic.Bool
 	finished := make(chan struct{})
 	defer close(finished)
+	// Capture the request context now: the goroutine outlives the handler under
+	// Echo, and reading c.Request() after ServeHTTP reuses the context is a data
+	// race (found by `go test -race`).
+	reqCtx := c.Request().Context()
 	go func() {
 		select {
-		case <-c.Request().Context().Done():
+		case <-reqCtx.Done():
 			gone.Store(true)
 			s.logger.Info("client left; the turn continues", "room_id", room.ID.String())
 		case <-finished:
@@ -208,101 +222,27 @@ func (s *Server) streamMessage(c echo.Context) error {
 		c.Response().Flush()
 	}
 
-	var (
-		assistant strings.Builder
-		finalText string
-		runID     string
-	)
-
-	streamErr := s.hermes.StreamChat(turnCtx, room.HermesSessionID, promptText, room.SystemPrompt, func(ev hermes.Event) error {
-		if ev.RunID != "" {
-			runID = ev.RunID
-		}
-		switch ev.Kind {
-		case "delta":
-			assistant.WriteString(ev.Text)
-			send("delta", map[string]string{"text": ev.Text})
-		case "tool":
-			name := ev.Name
-			if name == "" {
-				name = "tool"
-			}
-			status := ev.Status
-			if status == "" {
-				status = "running"
-			}
-			send("tool", map[string]string{"name": name, "status": status})
-		case "done":
-			if ev.Text != "" {
-				finalText = ev.Text
-			}
-		case "error":
-			message := ev.Text
-			if message == "" {
-				message = "Hermes reported a problem with this turn."
-			}
-			send("error", map[string]string{"message": message})
-		case "unknown":
-			raw := any(string(ev.Raw))
-			if json.Valid(ev.Raw) {
-				raw = json.RawMessage(ev.Raw)
-			}
-			send("unknown", map[string]any{"kind": ev.OriginalKind, "raw": raw})
-		}
-		return nil
-	})
-
-	rawBody := assistant.String()
-	if rawBody == "" && finalText != "" {
-		rawBody = finalText
-	}
-
-	// The promise markers belong to irisd, not to the bubble. Strip the ones
-	// whose file really exists; a broken promise stays in the body, visibly.
-	cleanedBody := rawBody
-	var found []artifacts.Found
-	if rawBody != "" {
-		folder := rooms.Open(room.FolderPath)
-		result := artifacts.Process(rawBody, func(rel string) (string, error) {
-			abs, err := folder.Resolve(rel)
-			if err != nil {
-				return "", err
-			}
-			info, err := os.Stat(abs)
-			if err != nil {
-				return "", err
-			}
-			if !info.Mode().IsRegular() {
-				return "", errors.New("not a regular file")
-			}
-			return abs, nil
-		})
-		cleanedBody = result.Body
-		found = result.Files
-		for _, broken := range result.Broken {
-			s.logger.Warn("artifact promised but not found", "room_id", room.ID.String(), "path", broken)
-		}
-	}
+	outcome, streamErr := s.runTurn(turnCtx, room, promptText, send)
+	rawBody := outcome.rawBody
 
 	var saved *store.Message
 	if rawBody != "" {
-		persistCtx, cancel := context.WithTimeout(context.Background(), persistTimeout)
-		row, err := s.store.InsertMessage(persistCtx, store.InsertMessageParams{
-			ID:     uuid.New(),
-			RoomID: room.ID,
-			Role:   "assistant",
-			Body:   cleanedBody,
-			RunID:  optionalString(runID),
-		})
-		cancel()
+		row, err := s.persistAssistant(turnCtx, room, rawBody, outcome.runID, outcome.meta)
 		if err != nil {
 			s.logger.Error("cannot save assistant message", "error", err, "room_id", room.ID.String())
 		} else {
-			saved = &row
-			for _, item := range found {
-				s.saveArtifact(room, row.ID, item)
-			}
+			saved = row
 		}
+	}
+
+	// The safety net only arms after a clean turn. A turn that died mid-stream
+	// has no trustworthy "what is still running" claim.
+	if streamErr == nil && saved != nil {
+		s.scheduleAfterTurn(turnCtx, room, chainRef{
+			id:        saved.ID,
+			createdAt: saved.CreatedAt,
+			deadline:  saved.CreatedAt.Add(continuation.Window),
+		}, false, outcome.meta)
 	}
 
 	if streamErr != nil {

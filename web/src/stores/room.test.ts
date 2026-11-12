@@ -53,15 +53,30 @@ interface Script {
   list: StoredMessage[][]
   stream: string[]
   failSend?: boolean
+  continuation?: {
+    id: string
+    attempt: number
+    status: string
+    due_at: string
+    deadline: string
+  } | null
 }
 
 function makeDeps(script: Script) {
-  const calls = { list: 0, send: 0 }
+  const calls = { list: 0, send: 0, cancel: 0, continuation: 0 }
   const deps: Partial<RoomStoreDeps> = {
     listMessages: async () => {
       const rows = script.list[Math.min(calls.list, script.list.length - 1)]
       calls.list += 1
       return rows
+    },
+    getContinuation: async () => {
+      calls.continuation += 1
+      return script.continuation ?? null
+    },
+    cancelContinuation: async () => {
+      calls.cancel += 1
+      return { cancelled: 1 }
     },
     sendMessage: async () => {
       calls.send += 1
@@ -218,5 +233,28 @@ describe('room store', () => {
     expect(store.state.streamingText).toBe('')
     const partial = store.state.messages.find((m) => m.incomplete)
     expect(partial?.body).toBe('sebagian')
+  })
+
+  it('shows the pending follow-up and cancels it through the API', async () => {
+    const first = [stored('u1', 'user', 'halo', 1)]
+    const { deps, calls } = makeDeps({
+      list: [first, first],
+      stream: DELTA_DONE,
+      continuation: {
+        id: 'c1',
+        attempt: 1,
+        status: 'pending',
+        due_at: '2026-11-12T11:00:20Z',
+        deadline: '2026-11-12T11:30:00Z',
+      },
+    })
+    const store = createRoomStore(ROOM, deps)
+    await store.load()
+    expect(store.state.continuation?.attempt).toBe(1)
+    expect(calls.continuation).toBeGreaterThan(0)
+
+    await store.stopContinuation()
+    expect(calls.cancel).toBe(1)
+    expect(store.state.continuation).toBe(null)
   })
 })

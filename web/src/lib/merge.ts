@@ -10,6 +10,7 @@ export function messageFromStored(row: StoredMessage): ChatMessage {
     role: row.role === 'user' ? 'user' : row.role === 'system' ? 'system' : 'assistant',
     body: row.body,
     createdAt: row.created_at,
+    meta: row.meta,
     attachments: row.attachments ?? [],
     local: false,
   }
@@ -35,6 +36,7 @@ export function mergeStored(current: ChatMessage[], incoming: StoredMessage[]): 
           ...merged[index],
           body: row.body,
           role: messageFromStored(row).role,
+          meta: row.meta,
           attachments: row.attachments ?? [],
           local: false,
           incomplete: false,

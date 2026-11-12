@@ -34,10 +34,12 @@ Hermes will **not** wake an API session when a background job finishes in this b
 1. **Wait in-turn (primary).** The room prompt requires: if you start a job, either wait for it with
    `process_manage wait` before ending the turn, or detach it with a log and say when it will be done.
    A turn that stays open cannot lose its result.
-2. **Bounded continuation pump (safety net).** When a run completes, irisd inspects its tool events for
-   `proc_…` ids. If any are still alive, it schedules a follow-up run ("check your job, report") with a
-   short backoff. Bounded per chain (max 3, max 30 min total), cancelled by a new user message, and always
-   visible in the room as a system line. Derived from the database, so a restart cannot double it.
+2. **Bounded continuation pump (safety net).** When a run completes, irisd inspects its tool events and
+   assembled reply for `proc_…` ids. If any remain, it stores `{procs, tools, statusLine}` on the message
+   (`messages.meta`) and schedules a follow-up run ("check your job, report") with a 20 s delay. Bounded per
+   chain (max 3, max 30 min total), cancelled by a new user message or archive, and always visible in the
+   room as a system line with a countdown and a stop button. Pending chains live in the `continuations`
+   table, so a restart cannot double them and a chain inside its window resumes on boot.
 
 ## Rooms
 

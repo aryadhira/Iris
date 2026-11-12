@@ -167,24 +167,26 @@ func normalize(name string, raw []byte, logger *slog.Logger) Event {
 	}
 
 	var p struct {
-		SessionID string `json:"session_id"`
-		RunID     string `json:"run_id"`
-		MessageID string `json:"message_id"`
-		Delta     string `json:"delta"`
-		Content   string `json:"content"`
-		ToolName  string `json:"tool_name"`
-		Name      string `json:"name"`
-		Tool      string `json:"tool"`
-		Status    string `json:"status"`
-		Error     string `json:"error"`
-		Message   string `json:"message"`
-		Detail    string `json:"detail"`
+		SessionID string  `json:"session_id"`
+		RunID     string  `json:"run_id"`
+		MessageID string  `json:"message_id"`
+		Delta     string  `json:"delta"`
+		Content   string  `json:"content"`
+		ToolName  string  `json:"tool_name"`
+		Name      string  `json:"name"`
+		Tool      string  `json:"tool"`
+		Status    string  `json:"status"`
+		Error     string  `json:"error"`
+		Message   string  `json:"message"`
+		Detail    string  `json:"detail"`
+		TS        float64 `json:"ts"`
 	}
 	_ = json.Unmarshal(raw, &p)
 
 	ev.SessionID = p.SessionID
 	ev.RunID = p.RunID
 	ev.MessageID = p.MessageID
+	ev.TS = p.TS
 
 	switch {
 	case name == "assistant.delta":
