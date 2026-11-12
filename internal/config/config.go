@@ -14,6 +14,7 @@ const (
 	DefaultHermesURL     = "http://127.0.0.1:8642"
 	DefaultHermesKeyFile = "~/.config/iris-api-key"
 	DefaultDataDir       = "~/iris-data"
+	DefaultVoiceURL      = "http://127.0.0.1:3310"
 )
 
 // Config is the complete runtime configuration. Secrets are held in memory only
@@ -24,6 +25,7 @@ type Config struct {
 	HermesURL     string
 	HermesKeyFile string
 	HermesKey     string
+	VoiceURL      string
 	Passphrase    string
 	CookieSecure  bool
 	DataDir       string
@@ -37,6 +39,7 @@ func Load() (*Config, error) {
 		DatabaseURL:   strings.TrimSpace(os.Getenv("IRIS_DATABASE_URL")),
 		HermesURL:     strings.TrimRight(envOr("IRIS_HERMES_URL", DefaultHermesURL), "/"),
 		HermesKeyFile: envOr("IRIS_HERMES_KEY_FILE", DefaultHermesKeyFile),
+		VoiceURL:      strings.TrimRight(envOr("IRIS_VOICE_URL", DefaultVoiceURL), "/"),
 		Passphrase:    os.Getenv("IRIS_PASSPHRASE"),
 	}
 

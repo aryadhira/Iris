@@ -14,6 +14,10 @@ a task keeps running until it is done or the agent asks a question.
 | **P4 — voice** | Push-to-talk, editable transcript, summary TTS, barge-in | On a phone over HTTPS: hold, speak, review, send; reply is spoken as ≤2 sentences without markdown |
 | **P5 — hardening** | systemd units, Tailscale HTTPS, backups, search, export, cost meter | Reboot the machine: Iris is up, rooms intact, backup restores in one command |
 
+P4 is built and measured in Chromium with a synthetic but real-speech microphone (see
+`changelogs/2026-11-12-p4-voice.md`). The phone-over-HTTPS half of its exit criterion is still open until a
+real device and microphone are used.
+
 ## P1 definition of done
 
 - `rooms` table: id, name, topic, hermes_session_id, created_at, archived_at

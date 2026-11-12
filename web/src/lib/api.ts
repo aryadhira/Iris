@@ -38,6 +38,12 @@ export interface MessagePage {
   messages: StoredMessage[]
 }
 
+export interface VoiceTranscription {
+  text: string
+  reason?: string
+  ms?: number
+}
+
 export const api = {
   me(): Promise<{ authenticated: boolean }> {
     return request('/api/auth/me')
@@ -133,6 +139,34 @@ export const api = {
 
   deleteFile(id: string): Promise<{ deleted: boolean }> {
     return request(`/api/files/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  },
+
+  /**
+   * Push-to-talk upload. The server sniffs the container; the blob type is a
+   * hint only. An empty recording comes back as {text: "", reason: "no_speech"}.
+   */
+  async transcribe(blob: Blob): Promise<VoiceTranscription> {
+    const form = new FormData()
+    form.append('audio', blob, 'rekaman.webm')
+    const response = await fetch('/api/voice/transcribe', {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: form,
+    })
+    if (!response.ok) throw new ApiError(await readError(response), response.status)
+    return (await response.json()) as VoiceTranscription
+  },
+
+  /** Summary speech. The server returns audio/mpeg, never raw markdown. */
+  async speak(text: string): Promise<Blob> {
+    const response = await fetch('/api/voice/speak', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    })
+    if (!response.ok) throw new ApiError(await readError(response), response.status)
+    return response.blob()
   },
 
   /**

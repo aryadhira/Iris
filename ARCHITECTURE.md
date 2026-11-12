@@ -68,9 +68,17 @@ is still stored for the record.
 ## Voice
 
 Push-to-talk → transcript → editable → send. Speech out is a **summary**, never the formatted text:
-markdown stripped, code/tables dropped, numbers spoken, max two sentences, full answer on screen.
-edge-tts, `-8%`, Indonesian female. Audio is relayed by our own service (local engines cannot be called
-from the browser).
+markdown stripped, code/tables dropped, secrets redacted, numbers spoken, max two sentences, full answer
+on screen. edge-tts, `-8%`, Indonesian female.
+
+Local engines cannot be called from the browser, so a loopback sidecar (`voice/`, `127.0.0.1:3310`) owns
+`faster-whisper` and edge-tts. `irisd` proxies `POST /api/voice/transcribe` (multipart audio) and
+`POST /api/voice/speak` behind the owner cookie; the sidecar is never exposed. A cold first turn reads as a
+hang, so the model and one throwaway synthesis are warmed at boot. The microphone needs a secure context:
+`localhost` is one, a LAN IP over plain http is not — the phone must use the Tailscale HTTPS hostname.
+
+See `voice/README.md` for endpoints, environment variables, and how to run it with `irisd`.
+
 
 ## Non-goals
 

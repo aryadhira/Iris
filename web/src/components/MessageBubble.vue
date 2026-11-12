@@ -13,6 +13,7 @@ import FileIcon from './FileIcon.vue'
 import FileLightbox from './FileLightbox.vue'
 import FormattedText from './FormattedText.vue'
 import RunTimeline from './RunTimeline.vue'
+import SpeakerButton from './SpeakerButton.vue'
 import { fileKind, fileTypeLabel, fileUrl, formatBytes, isImage } from '../lib/files'
 import type { ChatMessage, FileAttachment } from '../lib/types'
 
@@ -20,9 +21,13 @@ const props = withDefaults(
   defineProps<{
     message: ChatMessage
     streaming?: boolean
+    speaking?: boolean
+    loadingSpeech?: boolean
   }>(),
-  { streaming: false },
+  { streaming: false, speaking: false, loadingSpeech: false },
 )
+
+const emit = defineEmits<{ speak: [] }>()
 
 const preview = ref<FileAttachment | null>(null)
 const attachments = computed(() => props.message.attachments ?? [])
@@ -112,10 +117,21 @@ const time = computed(() => {
   >
     <BrandMark :size="26" class="mt-0.5" />
     <div class="min-w-0 flex-1">
-      <p class="mb-1 text-[11px] text-quiet">
-        <time v-if="time" :datetime="message.createdAt">Hermes · {{ time }}</time>
-        <span v-else>Hermes</span>
-      </p>
+      <div class="mb-1 flex min-h-[24px] items-center gap-1.5">
+        <p class="text-[11px] text-quiet">
+          <time v-if="time" :datetime="message.createdAt">Hermes · {{ time }}</time>
+          <span v-else>Hermes</span>
+        </p>
+        <SpeakerButton
+          :speaking="speaking"
+          :loading="loadingSpeech"
+          @toggle="emit('speak')"
+        />
+        <span v-if="speaking" class="text-[11px] text-quiet" data-testid="speaking-state">
+          membaca…
+        </span>
+        <span v-else-if="loadingSpeech" class="text-[11px] text-quiet">menyiapkan suara…</span>
+      </div>
       <div class="text-[14px] leading-relaxed text-ink">
         <FormattedText :text="message.body" />
         <span

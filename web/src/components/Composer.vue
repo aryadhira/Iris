@@ -1,8 +1,16 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { PhLockSimple, PhPaperclip, PhPaperPlaneRight, PhStop } from '@phosphor-icons/vue'
+import {
+  PhLockSimple,
+  PhMicrophone,
+  PhPaperclip,
+  PhPaperPlaneRight,
+  PhStop,
+  PhX,
+} from '@phosphor-icons/vue'
 import UploadChip from './UploadChip.vue'
 import type { PendingAttachment } from '../stores/attachments'
+import { formatElapsed, type PttPhase } from '../lib/voice'
 
 const props = defineProps<{
   modelValue: string
@@ -10,6 +18,11 @@ const props = defineProps<{
   archived: boolean
   attachments: PendingAttachment[]
   uploadBlock: string
+  voicePhase: PttPhase
+  voiceElapsed: number
+  voiceLevel: number
+  voiceError: string
+  voiceLocked: boolean
 }>()
 
 const emit = defineEmits<{
@@ -17,10 +30,21 @@ const emit = defineEmits<{
   send: []
   files: [files: File[]]
   remove: [key: string]
+  'voice-start': []
+  'voice-stop': []
+  'voice-cancel': []
+  'voice-toggle': []
+  'voice-dismiss': []
 }>()
 
 const textarea = ref<HTMLTextAreaElement | null>(null)
 const picker = ref<HTMLInputElement | null>(null)
+const pointerHandled = ref(false)
+
+const recording = computed(() => props.voicePhase === 'recording')
+const transcribing = computed(() => props.voicePhase === 'transcribing')
+const voiceBusy = computed(() => recording.value || transcribing.value)
+const editing = computed(() => props.voicePhase === 'editing')
 
 const hasReady = computed(() =>
   props.attachments.some((item) => item.status === 'ready' && item.id),
@@ -29,15 +53,28 @@ const canSend = computed(
   () =>
     !props.running &&
     !props.archived &&
+    !voiceBusy.value &&
     props.uploadBlock === '' &&
     (props.modelValue.trim() !== '' || hasReady.value),
 )
 
 const placeholder = computed(() => {
   if (props.archived) return 'Room ini diarsipkan.'
+  if (recording.value) return 'Sedang merekam…'
+  if (transcribing.value) return 'Mengubah suara jadi teks…'
   if (props.running) return 'Tunggu balasan selesai…'
   return 'Tulis pesan untuk Hermes…'
 })
+
+const BARS = [0.32, 0.58, 0.86, 0.48, 1, 0.72, 0.42, 0.78, 0.55]
+
+function barHeight(index: number): string {
+  const factor = BARS[index] ?? 0.5
+  // A square-root scale is what an audio meter looks like to the eye; a linear
+  // scale makes ordinary speech look like a flat row of dots.
+  const level = Math.sqrt(Math.max(0, Math.min(1, props.voiceLevel)))
+  return `${4 + Math.round(level * 26 * factor)}px`
+}
 
 function autosize(): void {
   const element = textarea.value
@@ -88,6 +125,46 @@ function onPaste(event: ClipboardEvent): void {
   emit('files', files)
 }
 
+function onMicPointerDown(event: PointerEvent): void {
+  if (props.archived || transcribing.value) return
+  pointerHandled.value = true
+  if (event.pointerType === 'touch') {
+    // A tap locks the recording; a second tap stops it.
+    emit('voice-toggle')
+    return
+  }
+  if (event.button !== 0) return
+  emit('voice-start')
+}
+
+function onMicPointerUp(event: PointerEvent): void {
+  if (event.pointerType === 'touch') return
+  if (recording.value) emit('voice-stop')
+}
+
+function onMicPointerCancel(): void {
+  if (recording.value) emit('voice-cancel')
+}
+
+function onMicPointerLeave(event: PointerEvent): void {
+  if (event.pointerType === 'touch') return
+  if (recording.value && !props.voiceLocked) emit('voice-stop')
+}
+
+function onMicClick(): void {
+  // Pointer events already handled this gesture. A keyboard activation has
+  // detail === 0 and must still work.
+  if (pointerHandled.value) {
+    pointerHandled.value = false
+    return
+  }
+  if (recording.value) {
+    emit('voice-stop')
+    return
+  }
+  emit('voice-start')
+}
+
 watch(
   () => props.modelValue,
   async () => {
@@ -134,6 +211,73 @@ onMounted(autosize)
       </p>
 
       <div
+        v-if="recording"
+        class="mb-2 flex items-center gap-2 rounded-xl border border-orchid/40 bg-surface/80 px-3 py-2"
+        data-testid="recording-state"
+      >
+        <span class="h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-red-400" aria-hidden="true" />
+        <span class="w-[42px] shrink-0 font-mono text-[13px] tabular-nums text-ink" data-testid="recording-timer">
+          {{ formatElapsed(voiceElapsed) }}
+        </span>
+        <div class="flex h-7 min-w-0 flex-1 items-end gap-[3px]" data-testid="level-meter" aria-hidden="true">
+          <span
+            v-for="(_, index) in BARS"
+            :key="index"
+            class="w-full rounded-full bg-orchid/80 transition-[height] duration-75"
+            :style="{ height: barHeight(index) }"
+          />
+        </div>
+        <span class="hidden shrink-0 text-[11.5px] text-quiet sm:inline">
+          {{ voiceLocked ? 'ketuk mic untuk berhenti' : 'lepas untuk berhenti' }}
+        </span>
+        <button
+          type="button"
+          class="tap flex shrink-0 items-center gap-1 rounded-lg px-2 text-[12.5px] text-muted hover:text-ink"
+          data-testid="recording-cancel"
+          aria-label="Batalkan rekaman"
+          @click="emit('voice-cancel')"
+        >
+          <PhX :size="14" />
+          batal
+        </button>
+      </div>
+
+      <div
+        v-else-if="transcribing"
+        class="mb-2 flex items-center gap-2 rounded-xl border border-line bg-surface/60 px-3 py-2 text-[12.5px] text-muted"
+        data-testid="transcribing-state"
+        role="status"
+      >
+        <span class="h-2 w-2 animate-pulse rounded-full bg-orchid" aria-hidden="true" />
+        Mengubah suara jadi teks…
+      </div>
+
+      <p
+        v-else-if="editing"
+        class="mb-2 text-[11.5px] leading-snug text-quiet"
+        data-testid="transcript-ready"
+      >
+        Transkrip sudah masuk ke kotak. Periksa nama dan angkanya sebelum kirim.
+      </p>
+
+      <div
+        v-if="voiceError"
+        class="mb-2 flex items-start gap-2 rounded-xl border border-line bg-surface px-3 py-2"
+        role="alert"
+        data-testid="voice-error"
+      >
+        <p class="min-w-0 flex-1 text-[12px] leading-snug text-muted">{{ voiceError }}</p>
+        <button
+          type="button"
+          class="tap shrink-0 rounded-lg px-2 text-[11.5px] text-quiet hover:text-ink"
+          aria-label="Tutup pesan kesalahan suara"
+          @click="emit('voice-dismiss')"
+        >
+          tutup
+        </button>
+      </div>
+
+      <div
         class="rounded-2xl border border-line bg-surface transition-colors focus-within:border-orchid/60"
         :class="{ 'opacity-60': archived }"
       >
@@ -141,7 +285,7 @@ onMounted(autosize)
           ref="textarea"
           :value="modelValue"
           rows="1"
-          :disabled="running || archived"
+          :disabled="running || archived || voiceBusy"
           data-testid="composer-input"
           :placeholder="placeholder"
           :aria-label="placeholder"
@@ -174,8 +318,31 @@ onMounted(autosize)
             >
               <PhPaperclip :size="18" />
             </button>
+            <button
+              type="button"
+              class="tap flex items-center justify-center rounded-xl transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+              :class="
+                recording
+                  ? 'bg-violet/25 text-orchid ring-1 ring-orchid/60'
+                  : 'text-muted hover:text-ink'
+              "
+              :disabled="archived || transcribing"
+              :aria-label="recording ? 'Berhenti merekam' : 'Rekam suara'"
+              :aria-pressed="recording"
+              :data-state="voicePhase"
+              data-testid="mic-button"
+              title="Tahan untuk bicara (ketuk untuk kunci di HP)"
+              @pointerdown.prevent="onMicPointerDown"
+              @pointerup.prevent="onMicPointerUp"
+              @pointercancel="onMicPointerCancel"
+              @pointerleave="onMicPointerLeave"
+              @click="onMicClick"
+            >
+              <PhMicrophone v-if="!recording" :size="19" weight="bold" />
+              <PhStop v-else :size="17" weight="fill" />
+            </button>
             <span class="hidden truncate pl-1 text-[11px] text-quiet sm:block">
-              Enter mengirim · Shift+Enter baris baru
+              Enter mengirim · tahan mic untuk bicara
             </span>
           </div>
 

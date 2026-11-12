@@ -54,6 +54,7 @@ type Store interface {
 type Server struct {
 	store   Store
 	hermes  hermes.Client
+	voice   VoiceClient
 	auth    *auth.Service
 	logger  *slog.Logger
 	version string
@@ -69,6 +70,7 @@ type Server struct {
 type Options struct {
 	Store                Store
 	Hermes               hermes.Client
+	Voice                VoiceClient
 	Auth                 *auth.Service
 	Logger               *slog.Logger
 	Version              string
@@ -87,6 +89,7 @@ func New(opts Options) *echo.Echo {
 	s := &Server{
 		store:   opts.Store,
 		hermes:  opts.Hermes,
+		voice:   opts.Voice,
 		auth:    opts.Auth,
 		logger:  logger,
 		version: opts.Version,
@@ -124,6 +127,9 @@ func New(opts Options) *echo.Echo {
 	e.POST("/api/rooms/:id/continuation/cancel", s.cancelContinuation)
 	e.GET("/api/rooms/:id/files", s.listRoomFiles)
 	e.POST("/api/rooms/:id/uploads", s.uploadFile)
+
+	e.POST("/api/voice/transcribe", s.voiceTranscribe)
+	e.POST("/api/voice/speak", s.voiceSpeak)
 
 	e.GET("/api/files/:id", s.downloadFile)
 	e.DELETE("/api/files/:id", s.deleteFile)

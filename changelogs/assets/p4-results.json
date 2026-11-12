@@ -1,0 +1,30 @@
+{
+  "viewport": "390x844",
+  "bargeInMs": 0.7,
+  "ptt": {
+    "startToRecordingMs": 129,
+    "meter": [
+      "11px",
+      "17px",
+      "24px",
+      "15px",
+      "27px",
+      "21px",
+      "14px",
+      "22px",
+      "17px"
+    ],
+    "stopToTranscriptMs": 2230,
+    "transcript": "Inyatkan saya besok pagi."
+  },
+  "checks": [],
+  "overflow390": {
+    "innerWidth": 390,
+    "scrollWidth": 390
+  },
+  "permissionDenied": "Izin mikrofon ditolak. Mikrofon hanya bisa dipakai lewat HTTPS — buka alamat Tailscale Iris (https://…), bukan IP LAN biasa, lalu izinkan mikrofon di browser.\n\ntutup",
+  "overflow1440": {
+    "innerWidth": 1440,
+    "scrollWidth": 1440
+  }
+}

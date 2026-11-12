@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { PhArrowLeft, PhFiles, PhList } from '@phosphor-icons/vue'
+import { PhArrowLeft, PhFiles, PhList, PhSpeakerHigh, PhSpeakerSlash } from '@phosphor-icons/vue'
 import BrandMark from '../components/BrandMark.vue'
 import Composer from '../components/Composer.vue'
 import ContinuationLine from '../components/ContinuationLine.vue'
@@ -12,9 +12,10 @@ import WorkingLine from '../components/WorkingLine.vue'
 import { ApiError, api } from '../lib/api'
 import { humanizeServerError } from '../lib/errors'
 import { roomState } from '../lib/timeline'
-import type { Room, TurnPhase } from '../lib/types'
+import type { ChatMessage, Room, TurnPhase } from '../lib/types'
 import { createAttachmentStore, type AttachmentStore } from '../stores/attachments'
 import { createRoomStore, type RoomStore } from '../stores/room'
+import { createSpeakerStore, createVoiceStore } from '../stores/voice'
 import { markSignedOut } from '../stores/auth'
 import { forgetRoom, rememberRoom } from '../stores/rooms'
 import { openRoomSheet } from '../stores/ui'
@@ -29,6 +30,18 @@ const libraryOpen = ref(false)
 const dragging = ref(false)
 const notFound = ref(false)
 const openError = ref('')
+
+const speaker = createSpeakerStore()
+const voice = createVoiceStore(
+  {},
+  {
+    stopPlayback: () => speaker.stop(),
+    onTranscript: (text) => appendTranscript(text),
+  },
+)
+const autoSpeak = ref(false)
+let autoSpeakBaseline = new Set<string>()
+let readyForAutoSpeak = false
 
 const scroller = ref<HTMLDivElement | null>(null)
 // Content grows after paint: images decode and artifact cards mount late. Without this the newest card
@@ -94,6 +107,54 @@ const stateChipClass = computed(() => {
 
 let continuationTimer: number | undefined
 
+function autoSpeakStorageKey(id: string): string {
+  return `iris.autospeak.${id}`
+}
+
+function loadAutoSpeak(id: string): void {
+  try {
+    autoSpeak.value = window.localStorage.getItem(autoSpeakStorageKey(id)) === '1'
+  } catch {
+    autoSpeak.value = false
+  }
+}
+
+function toggleAutoSpeak(): void {
+  autoSpeak.value = !autoSpeak.value
+  if (room.value) {
+    try {
+      window.localStorage.setItem(
+        autoSpeakStorageKey(room.value.id),
+        autoSpeak.value ? '1' : '0',
+      )
+    } catch {
+      // private mode; the switch still works for this tab
+    }
+  }
+  if (autoSpeak.value) {
+    const newest = [...messages.value].reverse().find((message) => message.role === 'assistant')
+    if (newest) autoSpeakBaseline.add(newest.id)
+  } else {
+    speaker.stop()
+  }
+}
+
+/** A misheard name is normal: the transcript is editable and never auto-sent. */
+function appendTranscript(text: string): void {
+  const current = store.value
+  if (!current) return
+  const existing = current.state.draft.trim()
+  current.state.draft = existing === '' ? text : `${existing} ${text}`
+}
+
+function speakMessage(message: ChatMessage): void {
+  void speaker.toggle(message.id, message.body)
+}
+
+function dismissVoiceError(): void {
+  voice.state.errorText = ''
+}
+
 async function stopContinuation(): Promise<void> {
   await store.value?.stopContinuation()
 }
@@ -111,6 +172,9 @@ function scrollToBottom(smooth = false): void {
 }
 
 async function openRoom(id: string): Promise<void> {
+  voice.cancel()
+  speaker.stop()
+  readyForAutoSpeak = false
   store.value?.dispose()
   store.value = null
   attachments.value?.clear()
@@ -131,6 +195,13 @@ async function openRoom(id: string): Promise<void> {
     const created = createRoomStore(found.id, {}, { archived: Boolean(found.archived_at) })
     store.value = created
     await created.load()
+    loadAutoSpeak(found.id)
+    autoSpeakBaseline = new Set(
+      created.state.messages
+        .filter((message) => message.role === 'assistant')
+        .map((message) => message.id),
+    )
+    readyForAutoSpeak = true
     await nextTick()
     scrollToBottom()
     document.title = `${found.name} — Iris`
@@ -220,6 +291,20 @@ watch(
   },
 )
 
+// Auto-speak only new replies, never the history a room opens with.
+watch(
+  () => messages.value.length,
+  () => {
+    if (!readyForAutoSpeak || !autoSpeak.value) return
+    for (const message of messages.value) {
+      if (message.role !== 'assistant' || autoSpeakBaseline.has(message.id)) continue
+      autoSpeakBaseline.add(message.id)
+      if (message.incomplete) continue
+      void speaker.toggle(message.id, message.body)
+    }
+  },
+)
+
 watch(phase, async (value) => {
   if (value === 'streaming') {
     await nextTick()
@@ -247,6 +332,8 @@ onBeforeUnmount(() => {
   contentObserver?.disconnect()
   contentObserver = null
   if (continuationTimer !== undefined) window.clearInterval(continuationTimer)
+  voice.dispose()
+  speaker.dispose()
   store.value?.dispose()
 })
 </script>
@@ -306,6 +393,24 @@ onBeforeUnmount(() => {
         <p class="min-w-0 flex-1 truncate text-[11.5px] text-quiet">
           {{ room?.topic || (room ? 'Tanpa topik' : '') }}
         </p>
+        <button
+          type="button"
+          class="tap flex shrink-0 items-center justify-center gap-1.5 rounded-xl border px-2 text-[12px] sm:px-3"
+          :class="
+            autoSpeak
+              ? 'border-orchid/50 bg-violet/15 text-orchid'
+              : 'border-line text-muted hover:border-orchid/40 hover:text-ink'
+          "
+          :aria-label="autoSpeak ? 'Matikan suara otomatis' : 'Bacakan balasan baru otomatis'"
+          :aria-pressed="autoSpeak"
+          data-testid="autospeak-toggle"
+          :data-state="autoSpeak ? 'on' : 'off'"
+          @click="toggleAutoSpeak"
+        >
+          <PhSpeakerHigh v-if="autoSpeak" :size="17" />
+          <PhSpeakerSlash v-else :size="17" />
+          <span class="hidden sm:inline">{{ autoSpeak ? 'Suara aktif' : 'Suara mati' }}</span>
+        </button>
         <button
           type="button"
           class="tap flex shrink-0 items-center justify-center gap-1.5 rounded-xl border border-line px-2 text-[12px] text-muted hover:border-orchid/40 hover:text-ink sm:px-3"
@@ -401,7 +506,12 @@ onBeforeUnmount(() => {
 
             <ol class="space-y-5" data-testid="message-list">
               <li v-for="message in messages" :key="message.id">
-                <MessageBubble :message="message" />
+                <MessageBubble
+                  :message="message"
+                  :speaking="speaker.state.playingId === message.id"
+                  :loading-speech="speaker.state.loadingId === message.id"
+                  @speak="speakMessage(message)"
+                />
               </li>
             </ol>
 
@@ -479,9 +589,19 @@ onBeforeUnmount(() => {
       :archived="archived"
       :attachments="pendingAttachments"
       :upload-block="uploadBlock"
+      :voice-phase="voice.state.phase"
+      :voice-elapsed="voice.state.elapsedMs"
+      :voice-level="voice.state.level"
+      :voice-error="voice.state.errorText"
+      :voice-locked="voice.state.locked"
       @send="send"
       @files="addFiles"
       @remove="removeAttachment"
+      @voice-start="voice.start(false)"
+      @voice-stop="voice.stop()"
+      @voice-cancel="voice.cancel()"
+      @voice-toggle="voice.toggle(true)"
+      @voice-dismiss="dismissVoiceError"
     />
 
     <div v-else-if="room" class="border-t border-line px-4 py-3">

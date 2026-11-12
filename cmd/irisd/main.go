@@ -19,9 +19,10 @@ import (
 	"github.com/aryadhira/iris/internal/hermes"
 	"github.com/aryadhira/iris/internal/httpapi"
 	"github.com/aryadhira/iris/internal/store"
+	irisvoice "github.com/aryadhira/iris/internal/voice"
 )
 
-const version = "0.1.0-p3"
+const version = "0.1.0-p4"
 
 func main() {
 	if err := run(); err != nil {
@@ -64,10 +65,12 @@ func run() error {
 	queries := store.New(pool)
 	authService := auth.New(queries, cfg.Passphrase, cfg.CookieSecure, logger)
 	hermesClient := hermes.New(cfg.HermesURL, cfg.HermesKey, logger)
+	voiceClient := irisvoice.New(cfg.VoiceURL, logger)
 
 	e := httpapi.New(httpapi.Options{
 		Store:            queries,
 		Hermes:           hermesClient,
+		Voice:            voiceClient,
 		Auth:             authService,
 		Logger:           logger,
 		Version:          version,
@@ -83,7 +86,7 @@ func run() error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("irisd listening", "addr", cfg.Addr, "hermes", cfg.HermesURL, "version", version)
+		logger.Info("irisd listening", "addr", cfg.Addr, "hermes", cfg.HermesURL, "voice", cfg.VoiceURL, "version", version)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
