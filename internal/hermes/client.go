@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"os"
 	"net/http"
 	"strings"
 	"time"
@@ -123,7 +124,11 @@ func (e *APIError) Code() string {
 }
 
 const (
-	defaultIdleTimeout = 90 * time.Second
+	// A long tool call emits no stream data at all: a model download, a build, a voice engine
+	// install. Treating 90 s of silence as death killed real work (a VoxCPM2 question died at
+	// 3m21s with "no data for 1m30s"), which contradicts the product's whole promise. Silence is
+	// not death: the turn may sit quiet for minutes and still be busy.
+	defaultIdleTimeout = 10 * time.Minute
 	// defaultApprovalIdleTimeout covers Hermes' approvals.timeout (300 s by
 	// default) plus the gateway's unwind after a timeout.
 	defaultApprovalIdleTimeout = 10 * time.Minute
@@ -160,12 +165,12 @@ func New(baseURL, apiKey string, logger *slog.Logger) *APIClient {
 		apiKey:              apiKey,
 		http:                &http.Client{Transport: transport},
 		logger:              logger,
-		idleTimeout:         defaultIdleTimeout,
+		idleTimeout:         idleTimeoutFromEnv(),
 		approvalIdleTimeout: defaultApprovalIdleTimeout,
 	}
 }
 
-// SetIdleTimeout overrides the 90 s idle watchdog (used by tests).
+// SetIdleTimeout overrides the idle watchdog (tests, and IRIS_HERMES_IDLE_TIMEOUT).
 func (c *APIClient) SetIdleTimeout(d time.Duration) {
 	if d > 0 {
 		c.idleTimeout = d
@@ -248,4 +253,19 @@ func (c *APIClient) DeleteSession(ctx context.Context, sessionID string) error {
 		return &APIError{StatusCode: resp.StatusCode, Body: resp.Status}
 	}
 	return nil
+}
+
+// idleTimeoutFromEnv lets the operator raise (or lower) the silence budget without a rebuild.
+// An unparsable or non-positive value falls back to the default rather than disabling the
+// watchdog: a stream that never ends is also a failure, just a quieter one.
+func idleTimeoutFromEnv() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("IRIS_HERMES_IDLE_TIMEOUT"))
+	if raw == "" {
+		return defaultIdleTimeout
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		return defaultIdleTimeout
+	}
+	return d
 }

@@ -15,10 +15,37 @@ GET  /health       {ok, model, voice, warm}
 with no speech answers **200** with `{"text": "", "reason": "no_speech"}` — a
 quick tap that records nothing is a normal event, never a 500.
 
-`/speak` runs the sanitiser in `voice/normalise.py` first, then edge-tts
-(`id-ID-GadisNeural`, rate `-8%`). `X-Iris-Spoken-Text` is the exact sentence
-the engine received, which is how tests prove markdown and secrets never reach
-TTS. The full formatted answer stays on screen.
+`/speak` runs the sanitiser in `voice/normalise.py` first, then the configured TTS
+provider. Default is `edge-tts` (`id-ID-GadisNeural`, rate `-8%`); setting
+`IRIS_TTS_PROVIDER=engine` switches the same call to the local **voice-engine**
+service, which can clone a voice from one sample. `X-Iris-Spoken-Text` is the exact
+sentence the engine received, which is how tests prove markdown and secrets never
+reach TTS. The full formatted answer stays on screen.
+
+## Provider TTS
+
+| Variabel | Default | Arti |
+|---|---|---|
+| `IRIS_TTS_PROVIDER` | `edge` | `edge` (cloud, neural) atau `engine` (lokal) |
+| `IRIS_TTS_URL` | `http://127.0.0.1:3320` | alamat voice-engine |
+| `IRIS_TTS_ENGINE_VOICE` | kosong | id/nama suara di voice-engine |
+| `IRIS_TTS_KEY` | kosong | `X-API-Key` milik voice-engine |
+| `IRIS_TTS_ENGINE_SPEED` | `1.0` | perlambat/percepat (0,5–2,0) |
+
+Kontrak `/speak` dan `/speak/stream` identik untuk kedua provider, jadi pergantian
+cukup lewat env + restart `iris-voice`:
+
+```bash
+# ~/.config/iris/env
+IRIS_TTS_PROVIDER=engine
+IRIS_TTS_ENGINE_VOICE=boss
+IRIS_TTS_KEY=<key dari ~/.config/voice-engine/env>
+IRIS_TTS_ENGINE_SPEED=0.95
+```
+
+Kalau voice-engine mati, `/speak` mengembalikan 500 dengan pesan dari engine —
+tidak ada fallback diam-diam ke cloud, supaya perilakunya bisa diprediksi.
+Kembalikan ke suara lama dengan `IRIS_TTS_PROVIDER=edge`.
 
 ## Streaming speech (`/speak/stream`)
 

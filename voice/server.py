@@ -31,6 +31,7 @@ from pathlib import Path
 import edge_tts
 import numpy as np
 from aiohttp import web
+import aiohttp
 from faster_whisper import WhisperModel
 
 try:  # package import (tests, `python -m voice.server`)
@@ -45,6 +46,15 @@ STT_THREADS = int(os.environ.get("IRIS_STT_THREADS", "4"))
 VOICE = os.environ.get("IRIS_TTS_VOICE", "id-ID-GadisNeural")
 VOICE_RATE = os.environ.get("IRIS_TTS_RATE", "-8%")
 VOICE_PITCH = os.environ.get("IRIS_TTS_PITCH", "+0Hz")
+# Provider TTS: "edge" (edge-tts, default) atau "engine" (voice-engine lokal,
+# bisa cloning suara sendiri). Kontrak /speak tidak berubah untuk keduanya.
+PROVIDER = os.environ.get("IRIS_TTS_PROVIDER", "edge").strip().lower()
+ENGINE_URL = os.environ.get("IRIS_TTS_URL", "http://127.0.0.1:3320").rstrip("/")
+ENGINE_VOICE = os.environ.get("IRIS_TTS_ENGINE_VOICE", "")
+ENGINE_KEY = os.environ.get("IRIS_TTS_KEY", "")
+ENGINE_SPEED = float(os.environ.get("IRIS_TTS_ENGINE_SPEED", "1.0"))
+if PROVIDER not in ("edge", "engine"):
+    raise SystemExit(f"IRIS_TTS_PROVIDER tidak dikenal: {PROVIDER!r} (pilih 'edge' atau 'engine')")
 SAMPLE_RATE = 16_000
 # Vocabulary biasing, not a transcript. Whisper small hears "selesai" as
 # "selasai" on this voice without it; domain words are a normal STT hint.
@@ -113,13 +123,24 @@ class Engines:
 
         if not self.tts_warm:
             started = time.perf_counter()
-            # edge-tts pays a WebSocket handshake on the first call. Burn it at
-            # boot, never on Boss's first question.
-            async for _ in edge_tts.Communicate("siap", VOICE, rate=VOICE_RATE, pitch=VOICE_PITCH).stream():
-                pass
+            if PROVIDER == "engine":
+                # voice-engine sudah memuat modelnya sendiri; cukup pastikan hidup.
+                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
+                    async with session.get(ENGINE_URL + "/healthz") as res:
+                        if res.status != 200:
+                            raise RuntimeError(f"voice-engine healthz {res.status}")
+                        info = await res.json()
+                if not info.get("ready"):
+                    log.warning("voice-engine menjawab tapi belum ready: %s", info.get("backends"))
+            else:
+                # edge-tts pays a WebSocket handshake on the first call. Burn it at
+                # boot, never on Boss's first question.
+                async for _ in edge_tts.Communicate("siap", VOICE, rate=VOICE_RATE, pitch=VOICE_PITCH).stream():
+                    pass
             self.tts_warm = True
             self.tts_warm_ms = (time.perf_counter() - started) * 1000
-            log.info("tts warmed in %.0f ms (voice=%s rate=%s)", self.tts_warm_ms, VOICE, VOICE_RATE)
+            log.info("tts warmed in %.0f ms (provider=%s voice=%s)", self.tts_warm_ms,
+                     PROVIDER, VOICE if PROVIDER == "edge" else (ENGINE_VOICE or "-"))
 
     async def transcribe(self, audio: bytes, suffix: str) -> tuple[str, float]:
         """Return (text, ms). Empty/no-speech is a normal 200, not an error."""
@@ -179,6 +200,22 @@ class Engines:
         if not self.tts_warm:
             await self.warm()
         started = time.perf_counter()
+        if PROVIDER == "engine":
+            payload: dict[str, object] = {"input": spoken, "response_format": "mp3"}
+            if ENGINE_VOICE:
+                payload["voice"] = ENGINE_VOICE
+            if ENGINE_SPEED and ENGINE_SPEED != 1.0:
+                payload["speed"] = ENGINE_SPEED
+            headers = {"X-API-Key": ENGINE_KEY} if ENGINE_KEY else {}
+            timeout = aiohttp.ClientTimeout(total=180)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(ENGINE_URL + "/v1/audio/speech", json=payload, headers=headers) as res:
+                    body = await res.read()
+                    if res.status != 200:
+                        raise RuntimeError(f"voice-engine {res.status}: {body[:200]!r}")
+                    if not body:
+                        raise RuntimeError("voice-engine mengembalikan audio kosong")
+            return body, (time.perf_counter() - started) * 1000
         buffer = bytearray()
         async for chunk in edge_tts.Communicate(
             spoken, VOICE, rate=VOICE_RATE, pitch=VOICE_PITCH
@@ -200,7 +237,8 @@ async def health(_request: web.Request) -> web.Response:
     return web.json_response({
         "ok": True,
         "model": STT_MODEL,
-        "voice": VOICE,
+        "provider": PROVIDER,
+        "voice": VOICE if PROVIDER == "edge" else (ENGINE_VOICE or "engine-default"),
         "warm": engines.ready,
     })
 
@@ -275,7 +313,7 @@ async def speak_stream(request: web.Request) -> web.StreamResponse:
         await emit({
             "type": "meta",
             "spoken": spoken,
-            "voice": VOICE,
+            "voice": VOICE if PROVIDER == "edge" else (ENGINE_VOICE or "engine-default"),
             "sentences": len(sentences),
         })
 
