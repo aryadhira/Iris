@@ -293,7 +293,20 @@ func (s *Server) streamTurn(
 		promptText,
 		func(name string, payload any) { s.publishRoomEvent(room.ID, name, payload) },
 		partial.update,
-		func(runID string) { s.setAssistantRunID(turnCtx, messageID, runID) },
+		func(runID string) {
+			s.setAssistantRunID(turnCtx, messageID, runID)
+			// A client that attached before this turn began must learn it exists; otherwise the room
+			// reads "idle" while the agent is working (seen with a second tab and with the phone).
+			s.publishRoomEvent(room.ID, "run", map[string]any{
+				"messageId": messageID.String(),
+				"run": map[string]any{
+					"id":           runID,
+					"status":       "running",
+					"started_at":   time.Now().UTC().Format(time.RFC3339),
+					"continuation": 0,
+				},
+			})
+		},
 	)
 	rawBody := outcome.rawBody
 

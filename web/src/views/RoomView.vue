@@ -577,7 +577,36 @@ onMounted(async () => {
   }, 4000)
 })
 
+// Coming back from the background (or from bfcache) must re-open the live stream: Android freezes the
+// tab, the socket dies silently, and the room would otherwise sit on a zombie connection showing "idle"
+// while the agent is still working.
+let hiddenAt = 0
+function onVisibilityChange(): void {
+  if (document.visibilityState === 'hidden') {
+    hiddenAt = Date.now()
+    return
+  }
+  const away = hiddenAt === 0 ? 0 : Date.now() - hiddenAt
+  hiddenAt = 0
+  if (away > 2000) store.value?.resync('visible')
+}
+function onPageShow(): void {
+  if (document.visibilityState === 'visible') store.value?.resync('visible')
+}
+function onOnline(): void {
+  store.value?.resync('visible')
+}
+
+onMounted(() => {
+  document.addEventListener('visibilitychange', onVisibilityChange)
+  window.addEventListener('pageshow', onPageShow)
+  window.addEventListener('online', onOnline)
+})
+
 onBeforeUnmount(() => {
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+  window.removeEventListener('pageshow', onPageShow)
+  window.removeEventListener('online', onOnline)
   contentObserver?.disconnect()
   contentObserver = null
   if (clockTimer !== undefined) window.clearInterval(clockTimer)

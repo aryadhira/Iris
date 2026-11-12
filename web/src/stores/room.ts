@@ -32,6 +32,8 @@ export interface RoomStoreDeps {
   openEvents: (roomId: string, signal: AbortSignal) => Promise<Response>
   retryMessage: (roomId: string, messageId: string, signal: AbortSignal) => Promise<Response>
   sleep: (ms: number) => Promise<void>
+  /** How often to check the live stream for silence; 0 disables the watchdog (tests do this). */
+  watchdogMs?: number
   reconnectDelays: number[]
   now: () => number
 }
@@ -140,6 +142,8 @@ export function createRoomStore(
   let disposed = false
   let liveController: AbortController | null = null
   let livePromise: Promise<void> | null = null
+  let attempts = 0
+  let lastLiveByteAt = 0
   let liveConnected = false
 
   function applyRun(run: RoomRun | null): void {
@@ -434,14 +438,54 @@ export function createRoomStore(
     await refreshApprovals()
   }
 
+  /**
+   * Re-open the live stream now, skipping the backoff.
+   *
+   * A phone that is backgrounded does not get an error on its stream: Android freezes the tab, the socket dies,
+   * and `reader.read()` simply never resolves. Without this the room sat on a zombie connection and looked idle
+   * until a manual reload, which is exactly what Boss reported when he left the app and came back.
+   */
+  function resync(reason: string): void {
+    if (disposed) return
+    const controller = liveController
+    liveController = null
+    liveConnected = false
+    attempts = 0
+    lastLiveByteAt = d.now()
+    try {
+      controller?.abort()
+    } catch {
+      // aborting an already-dead controller is not an error
+    }
+    if (reason === 'visible') {
+      void reconcile()
+      void refreshApprovals()
+      void refreshContinuation()
+    }
+  }
+
+  /** The stream is dead if it produced no bytes (not even a heartbeat) for this long. */
+  const LIVE_SILENCE_MS = 45_000
+  let watchdog: number | undefined
+
+  function startWatchdog(): void {
+    const every = d.watchdogMs ?? 0
+    if (every <= 0 || watchdog !== undefined || typeof window === 'undefined') return
+    watchdog = window.setInterval(() => {
+      if (disposed || !liveConnected) return
+      if (document.visibilityState !== 'visible') return
+      if (d.now() - lastLiveByteAt > LIVE_SILENCE_MS) resync('silent')
+    }, every)
+  }
+
   /** Attach to the room hub. Reconnects forever until the room unmounts. */
   function startLive(): void {
     if (disposed || livePromise) return
     livePromise = runLive()
+    startWatchdog()
   }
 
   async function runLive(): Promise<void> {
-    let attempts = 0
     while (!disposed) {
       liveController = new AbortController()
       try {
@@ -450,6 +494,7 @@ export function createRoomStore(
           throw new Error(`events answered ${response.status}`)
         }
         liveConnected = true
+        lastLiveByteAt = d.now()
         if (state.connectionLost) {
           state.connectionLost = false
           if (state.phase === 'reconnecting') state.phase = 'streaming'
@@ -482,6 +527,9 @@ export function createRoomStore(
     try {
       while (!disposed) {
         const { value, done } = await reader.read()
+        // Any bytes — including the 15 s heartbeat comment — prove the stream is alive. A frozen
+        // phone tab resolves neither value nor error, so this timestamp is the only liveness signal.
+        lastLiveByteAt = d.now()
         if (done) break
         for (const frame of parser.feed(decoder.decode(value, { stream: true }))) {
           handleLiveFrame(frame)
@@ -526,6 +574,17 @@ export function createRoomStore(
           // mirror is the fallback: adopt the final row instead of leaving the
           // room without the answer until a manual reload.
           void reconcile()
+        }
+        return
+      }
+      case 'run': {
+        // Announced when a turn starts (a retry, another device, or a continuation). Adopt it so the room
+        // says "bekerja" immediately rather than waiting for a reconnect to fetch a snapshot.
+        const payload = frameJson<{ run?: RoomRun; messageId?: string }>(frame)
+        if (payload?.run) {
+          state.run = payload.run
+          state.phase = 'streaming'
+          if (state.turnStartedAt === 0) state.turnStartedAt = d.now()
         }
         return
       }
@@ -866,6 +925,7 @@ export function createRoomStore(
     refreshApprovals,
     resolveApproval,
     stopRun,
+    resync,
     send,
     retry,
     reload,

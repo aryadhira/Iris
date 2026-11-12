@@ -101,6 +101,7 @@ function makeDeps(script: Script) {
       return new Response(sse(script.stream), { status: 200 })
     },
     sleep: async () => {},
+    watchdogMs: 0,
     reconnectDelays: [0, 0],
     now: () => Date.parse('2026-11-12T11:00:00Z'),
   }
@@ -184,6 +185,43 @@ describe('room store', () => {
     expect(store.state.streamingText).toBe('')
     expect(store.state.phase).toBe('idle')
     expect(store.state.messages.some((m) => m.id === 'a2')).toBe(true)
+    store.dispose()
+  })
+
+  it('re-opens a zombie stream instead of waiting on it forever', async () => {
+    // Boss's report: leave the app mid-answer, come back, and the long process looked gone. Android freezes
+    // the tab, the socket dies, and reader.read() resolves neither a value nor an error, so the reconnect
+    // loop waited on a dead stream while the room showed idle.
+    const list = [stored('u1', 'user', 'halo', 1)]
+    const { deps } = makeDeps({ list: [list], stream: [] })
+    // A zero-delay sleep lets the reconnect loop starve timers (the store would reconnect in a tight
+    // microtask loop). Yield to the event loop instead, so the assertions can run.
+    deps.sleep = (ms) => new Promise((resolve) => setTimeout(resolve, Math.min(ms, 5)))
+    let calls = 0
+    deps.openEvents = async (_roomId, signal) => {
+      calls += 1
+      if (calls === 1) {
+        // Frozen tab: the request never completes on its own, but a real fetch rejects when aborted.
+        return new Promise<Response>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
+        })
+      }
+      return new Response(
+        sse(['event: snapshot\ndata: {"run":null,"partial":"","approvals":[]}\n\n']),
+        { status: 200 },
+      )
+    }
+    const store = createRoomStore(ROOM, deps)
+    await store.load()
+    store.startLive()
+    await tick()
+    expect(calls).toBe(1)
+
+    store.resync('visible') // the phone came back to the foreground
+    await tick()
+    await tick()
+    // The point is that it did not stay stuck on the dead stream: any further connect proves the resync.
+    expect(calls).toBeGreaterThan(1)
     store.dispose()
   })
 
