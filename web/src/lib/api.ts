@@ -129,6 +129,19 @@ export const api = {
   },
 
   /**
+   * The room's live stream. The caller owns the body; this is the same hub the
+   * POST turn publishes to, so every attached device sees the same frames.
+   */
+  openRoomEvents(roomId: string, signal?: AbortSignal): Promise<Response> {
+    return fetch(`/api/rooms/${encodeURIComponent(roomId)}/events`, {
+      method: 'GET',
+      credentials: 'same-origin',
+      headers: { Accept: 'text/event-stream' },
+      signal,
+    })
+  },
+
+  /**
    * Re-run the turn behind an existing user message. The server reuses that
    * row and streams a fresh reply; it never creates a second user message.
    */

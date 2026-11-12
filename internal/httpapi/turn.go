@@ -14,6 +14,7 @@ import (
 	"github.com/aryadhira/iris/internal/artifacts"
 	"github.com/aryadhira/iris/internal/continuation"
 	"github.com/aryadhira/iris/internal/hermes"
+	"github.com/aryadhira/iris/internal/live"
 	"github.com/aryadhira/iris/internal/reply"
 	"github.com/aryadhira/iris/internal/rooms"
 	"github.com/aryadhira/iris/internal/store"
@@ -105,15 +106,20 @@ func durationMs(start, end float64) int64 {
 }
 
 // runTurn streams one Hermes turn and returns the honest trace. emit may be
-// nil (a continuation has no browser attached).
+// nil (a continuation has no browser attached). onVisible receives the whole
+// cleaned text so the caller can persist a partial answer; onRunID receives the
+// id as soon as Hermes names it, so a crash leaves the row linked to its run.
 func (s *Server) runTurn(
 	ctx context.Context,
 	room store.Room,
 	prompt string,
 	emit func(name string, payload any),
+	onVisible func(text string),
+	onRunID func(runID string),
 ) (turnOutcome, error) {
 	var (
 		assistant     strings.Builder
+		visibleText   strings.Builder
 		finalText     string
 		runID         string
 		stopped       bool
@@ -132,13 +138,20 @@ func (s *Server) runTurn(
 		if ev.RunID != "" && ev.RunID != runID {
 			runID = ev.RunID
 			s.upsertRun(ctx, room, runID, ev.SessionID, "running")
+			if onRunID != nil {
+				onRunID(runID)
+			}
 		}
 		trace.observe(ev, s.now())
 		switch ev.Kind {
 		case "delta":
 			assistant.WriteString(ev.Text)
 			if text := visible.Feed(ev.Text); text != "" {
+				visibleText.WriteString(text)
 				sendEvent(emit, "delta", map[string]string{"text": text})
+				if onVisible != nil {
+					onVisible(visibleText.String())
+				}
 			}
 		case "tool":
 			if ev.Name != "" && (ev.Status == "started" || ev.Status == "" || ev.Status == "running") {
@@ -166,7 +179,7 @@ func (s *Server) runTurn(
 			if row, err := s.recordApproval(ctx, room, runID, ev, room.HermesSessionID); err != nil {
 				s.logger.Error("cannot persist approval", "error", err, "room_id", room.ID.String(), "run_id", runID)
 			} else {
-				s.hub.publish(room.ID, roomEvent{Name: "approval", Payload: viewApproval(*row)})
+				s.hub.Publish(room.ID, live.Event{Name: "approval", Payload: viewApproval(*row)})
 				s.notifyApproval(ctx, room, *row)
 			}
 		case "done":
@@ -209,7 +222,11 @@ func (s *Server) runTurn(
 	// Release any held tail (an ordinary final line, or a line whose status was
 	// withheld). Flushing is safe after a stop as well: the raw body is kept.
 	if text := visible.Flush(); text != "" {
+		visibleText.WriteString(text)
 		sendEvent(emit, "delta", map[string]string{"text": text})
+		if onVisible != nil {
+			onVisible(visibleText.String())
+		}
 	}
 
 	rawBody := assistant.String()
@@ -326,18 +343,101 @@ func (s *Server) noteSystem(ctx context.Context, roomID uuid.UUID, body string) 
 		Meta:   []byte("{}"),
 	}); err != nil {
 		s.logger.Error("cannot write system line", "error", err, "room_id", roomID.String())
+		return
+	}
+	s.publishRoomEvent(roomID, "note", map[string]string{"body": body})
+}
+
+// partialWriter throttles writes of the streaming body. It never holds a turn
+// up: a failed partial write is logged and the next delta tries again.
+type partialWriter struct {
+	s       *Server
+	ctx     context.Context
+	id      uuid.UUID
+	lastLen int
+	lastAt  time.Time
+}
+
+func (s *Server) newPartialWriter(ctx context.Context, id uuid.UUID) *partialWriter {
+	return &partialWriter{s: s, ctx: ctx, id: id, lastAt: s.now()}
+}
+
+func (w *partialWriter) update(text string) {
+	if w == nil || w.id == uuid.Nil {
+		return
+	}
+	if len(text)-w.lastLen < w.s.partialChars && w.s.now().Sub(w.lastAt) < w.s.partialInterval {
+		return
+	}
+	w.write(text)
+}
+
+func (w *partialWriter) write(text string) {
+	w.lastLen = len(text)
+	w.lastAt = w.s.now()
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(w.ctx), persistTimeout)
+	defer cancel()
+	if err := w.s.store.UpdateMessagePartial(writeCtx, store.UpdateMessagePartialParams{
+		ID:   w.id,
+		Body: text,
+	}); err != nil {
+		w.s.logger.Error("cannot persist partial reply", "error", err, "message_id", w.id.String())
 	}
 }
 
-// persistAssistant strips valid artifact markers, stores the visible text with
+// startAssistant creates the row before the first token, so a reload during
+// the turn has somewhere to read from.
+func (s *Server) startAssistant(ctx context.Context, room store.Room) (*store.Message, error) {
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), persistTimeout)
+	defer cancel()
+	row, err := s.store.StartStreamingMessage(writeCtx, store.StartStreamingMessageParams{
+		ID:     uuid.New(),
+		RoomID: room.ID,
+		Meta:   []byte("{}"),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+func (s *Server) setAssistantRunID(ctx context.Context, id uuid.UUID, runID string) {
+	if id == uuid.Nil || runID == "" {
+		return
+	}
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), persistTimeout)
+	defer cancel()
+	if err := s.store.SetMessageRunID(writeCtx, store.SetMessageRunIDParams{
+		ID:    id,
+		RunID: optionalString(runID),
+	}); err != nil {
+		s.logger.Error("cannot link streaming message to run", "error", err, "message_id", id.String())
+	}
+}
+
+func (s *Server) discardAssistant(ctx context.Context, id uuid.UUID) {
+	if id == uuid.Nil {
+		return
+	}
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), persistTimeout)
+	defer cancel()
+	if err := s.store.DeleteStreamingMessage(writeCtx, id); err != nil {
+		s.logger.Error("cannot discard empty streaming message", "error", err, "message_id", id.String())
+	}
+}
+
+// finalizeAssistant strips valid artifact markers, stores the visible text with
 // its meta, and links any real artifact files. A missing file keeps its marker
-// in the body, visibly.
-func (s *Server) persistAssistant(
+// in the body, visibly. state is done for a finished turn and interrupted for a
+// stream that died without a terminal event.
+func (s *Server) finalizeAssistant(
 	ctx context.Context,
 	room store.Room,
+	messageID uuid.UUID,
 	rawBody string,
 	runID string,
 	meta continuation.Meta,
+	state string,
 ) (*store.Message, error) {
 	cleanedBody := rawBody
 	var found []artifacts.Found
@@ -370,15 +470,17 @@ func (s *Server) persistAssistant(
 	if err != nil {
 		metaBytes = []byte("{}")
 	}
+	if state == "" {
+		state = "done"
+	}
 	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), persistTimeout)
 	defer cancel()
-	row, err := s.store.InsertMessage(persistCtx, store.InsertMessageParams{
-		ID:     uuid.New(),
-		RoomID: room.ID,
-		Role:   "assistant",
-		Body:   cleanedBody,
-		RunID:  optionalString(runID),
-		Meta:   metaBytes,
+	row, err := s.store.FinalizeMessage(persistCtx, store.FinalizeMessageParams{
+		ID:    messageID,
+		Body:  cleanedBody,
+		RunID: optionalString(runID),
+		Meta:  metaBytes,
+		State: state,
 	})
 	if err != nil {
 		return nil, err

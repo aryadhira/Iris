@@ -282,6 +282,46 @@ func (q *Queries) ListContinuationsForChain(ctx context.Context, chainID uuid.UU
 	return items, nil
 }
 
+const listOpenContinuations = `-- name: ListOpenContinuations :many
+SELECT id, room_id, chain_id, attempt, status, reason, due_at, deadline, started_at, finished_at, created_at FROM continuations
+WHERE status IN ('pending', 'running')
+ORDER BY due_at ASC, created_at ASC
+`
+
+// A cold room payload needs to know that a chain is waiting, without one
+// request per room.
+func (q *Queries) ListOpenContinuations(ctx context.Context) ([]Continuation, error) {
+	rows, err := q.db.Query(ctx, listOpenContinuations)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Continuation{}
+	for rows.Next() {
+		var i Continuation
+		if err := rows.Scan(
+			&i.ID,
+			&i.RoomID,
+			&i.ChainID,
+			&i.Attempt,
+			&i.Status,
+			&i.Reason,
+			&i.DueAt,
+			&i.Deadline,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPendingContinuations = `-- name: ListPendingContinuations :many
 SELECT id, room_id, chain_id, attempt, status, reason, due_at, deadline, started_at, finished_at, created_at FROM continuations
 WHERE room_id = $1

@@ -13,6 +13,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/aryadhira/iris/internal/hermes"
+	"github.com/aryadhira/iris/internal/live"
 	"github.com/aryadhira/iris/internal/store"
 )
 
@@ -104,7 +105,7 @@ func (s *Server) expireApprovals(ctx context.Context) []store.Approval {
 		return nil
 	}
 	for _, row := range rows {
-		s.hub.publish(row.RoomID, roomEvent{Name: "approval", Payload: viewApproval(row)})
+		s.hub.Publish(row.RoomID, live.Event{Name: "approval.resolved", Payload: viewApproval(row)})
 	}
 	return rows
 }
@@ -242,7 +243,7 @@ func (s *Server) resolveApproval(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, errorBody("Hermes sudah menjawab, tapi Iris tidak bisa menyimpan keputusanmu."))
 	}
 	view := viewApproval(updated)
-	s.hub.publish(row.RoomID, roomEvent{Name: "approval", Payload: view})
+	s.hub.Publish(row.RoomID, live.Event{Name: "approval.resolved", Payload: view})
 	return c.JSON(http.StatusOK, map[string]any{"approval": view})
 }
 
@@ -261,7 +262,7 @@ func (s *Server) resolveFixtureApproval(c echo.Context, row store.Approval, choi
 		return c.JSON(http.StatusConflict, errorBody("Izin ini sudah dijawab."))
 	}
 	view := viewApproval(updated)
-	s.hub.publish(row.RoomID, roomEvent{Name: "approval", Payload: view})
+	s.hub.Publish(row.RoomID, live.Event{Name: "approval.resolved", Payload: view})
 	return c.JSON(http.StatusOK, map[string]any{"approval": view})
 }
 
@@ -275,7 +276,7 @@ func (s *Server) supersedeApproval(ctx context.Context, row store.Approval, reas
 		s.logger.Error("cannot supersede approval", "error", err, "approval_id", row.ID.String(), "reason", reason)
 		return
 	}
-	s.hub.publish(row.RoomID, roomEvent{Name: "approval", Payload: viewApproval(updated)})
+	s.hub.Publish(row.RoomID, live.Event{Name: "approval.resolved", Payload: viewApproval(updated)})
 }
 
 func approvalGoneMessage(state string) string {
@@ -381,6 +382,6 @@ func (s *Server) fixtureApproval(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, errorBody("Fixture approval gagal disimpan."))
 	}
 	view := viewApproval(row)
-	s.hub.publish(room.ID, roomEvent{Name: "approval", Payload: view})
+	s.hub.Publish(room.ID, live.Event{Name: "approval", Payload: view})
 	return c.JSON(http.StatusCreated, map[string]any{"approval": view})
 }

@@ -38,6 +38,10 @@ const attachments = computed(() => props.message.attachments ?? [])
 const images = computed(() => attachments.value.filter((file) => isImage(file)))
 const files = computed(() => attachments.value.filter((file) => !isImage(file)))
 const artifacts = computed(() => (props.message.role === 'assistant' ? attachments.value : []))
+const canSpeak = computed(
+  () => props.message.role === 'assistant' && (!props.message.state || props.message.state === 'done') && !props.message.incomplete,
+)
+const interrupted = computed(() => props.message.state === 'interrupted' || props.message.incomplete)
 
 const time = computed(() => {
   const date = new Date(props.message.createdAt)
@@ -160,6 +164,7 @@ const time = computed(() => {
           <span v-else>Hermes</span>
         </p>
         <SpeakerButton
+          v-if="canSpeak"
           :speaking="speaking"
           :loading="loadingSpeech"
           @toggle="emit('speak')"
@@ -175,6 +180,13 @@ const time = computed(() => {
         >
           digantikan
         </span>
+        <span
+          v-if="interrupted"
+          class="rounded-full border border-line px-1.5 py-0.5 text-[10px] leading-tight text-quiet"
+          data-testid="interrupted-label"
+        >
+          terputus
+        </span>
       </div>
       <div class="text-[14px] leading-relaxed text-ink">
         <FormattedText :text="message.body" />
@@ -188,7 +200,7 @@ const time = computed(() => {
         <ArtifactCard v-for="file in artifacts" :key="file.id" :file="file" />
       </div>
       <RunTimeline :meta="message.meta" :run-id="message.runId" />
-      <p v-if="message.incomplete" class="mt-1.5 text-[12px] text-quiet">
+      <p v-if="interrupted" class="mt-1.5 text-[12px] text-quiet">
         Balasan terputus — mungkin belum lengkap.
       </p>
     </div>

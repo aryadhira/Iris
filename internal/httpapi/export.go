@@ -77,6 +77,14 @@ func (s *Server) exportRoom(c echo.Context) error {
 		case "assistant":
 			label = "Hermes"
 		}
+		// A row that is still writing or was cut off is not a final answer;
+		// the export says so instead of quarantining it or hiding it.
+		switch message.State {
+		case "streaming":
+			label += " (masih ditulis)"
+		case "interrupted":
+			label += " (terputus)"
+		}
 		fmt.Fprintf(&body, "**%s** · %s\n\n", label, indonesianDateTime(message.CreatedAt))
 		if message.Body != "" {
 			// The export is a reading surface too: an old assistant row written

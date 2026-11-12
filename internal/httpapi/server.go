@@ -15,6 +15,7 @@ import (
 
 	"github.com/aryadhira/iris/internal/auth"
 	"github.com/aryadhira/iris/internal/hermes"
+	"github.com/aryadhira/iris/internal/live"
 	"github.com/aryadhira/iris/internal/pricing"
 	"github.com/aryadhira/iris/internal/reminder"
 	"github.com/aryadhira/iris/internal/store"
@@ -31,6 +32,13 @@ type Store interface {
 	UpdateRoomPrompt(ctx context.Context, arg store.UpdateRoomPromptParams) (store.Room, error)
 
 	InsertMessage(ctx context.Context, arg store.InsertMessageParams) (store.Message, error)
+	StartStreamingMessage(ctx context.Context, arg store.StartStreamingMessageParams) (store.Message, error)
+	UpdateMessagePartial(ctx context.Context, arg store.UpdateMessagePartialParams) error
+	SetMessageRunID(ctx context.Context, arg store.SetMessageRunIDParams) error
+	FinalizeMessage(ctx context.Context, arg store.FinalizeMessageParams) (store.Message, error)
+	DeleteStreamingMessage(ctx context.Context, id uuid.UUID) error
+	GetStreamingMessage(ctx context.Context, roomID uuid.UUID) (store.Message, error)
+	MarkStreamingMessagesInterrupted(ctx context.Context) ([]store.Message, error)
 	ListMessages(ctx context.Context, arg store.ListMessagesParams) ([]store.Message, error)
 	ListAllMessages(ctx context.Context, roomID uuid.UUID) ([]store.Message, error)
 	GetMessage(ctx context.Context, id uuid.UUID) (store.Message, error)
@@ -42,6 +50,7 @@ type Store interface {
 	CreateContinuation(ctx context.Context, arg store.CreateContinuationParams) (store.Continuation, error)
 	GetContinuation(ctx context.Context, id uuid.UUID) (store.Continuation, error)
 	ListPendingContinuations(ctx context.Context, roomID uuid.UUID) ([]store.Continuation, error)
+	ListOpenContinuations(ctx context.Context) ([]store.Continuation, error)
 	ListContinuationsForChain(ctx context.Context, chainID uuid.UUID) ([]store.Continuation, error)
 	CountContinuationsForChain(ctx context.Context, chainID uuid.UUID) (int64, error)
 	ClaimDueContinuations(ctx context.Context, arg store.ClaimDueContinuationsParams) ([]store.Continuation, error)
@@ -59,7 +68,10 @@ type Store interface {
 	UpsertRun(ctx context.Context, arg store.UpsertRunParams) (store.Run, error)
 	UpdateRunStatus(ctx context.Context, arg store.UpdateRunStatusParams) (store.Run, error)
 	GetRun(ctx context.Context, runID string) (store.Run, error)
+	GetLatestRun(ctx context.Context, roomID uuid.UUID) (store.Run, error)
+	ListLatestRuns(ctx context.Context) ([]store.Run, error)
 	ListActiveRuns(ctx context.Context, roomID uuid.UUID) ([]store.Run, error)
+	MarkActiveRunsInterrupted(ctx context.Context, updatedAt time.Time) ([]store.Run, error)
 
 	UpsertApproval(ctx context.Context, arg store.UpsertApprovalParams) (store.Approval, error)
 	GetApproval(ctx context.Context, id uuid.UUID) (store.Approval, error)
@@ -108,9 +120,14 @@ type Server struct {
 	now                  func() time.Time
 	continuationInterval time.Duration
 
-	hub             *roomHub
+	hub             *live.Hub
 	approvalTimeout time.Duration
 	approvalFixture bool
+
+	// partialInterval/partialChars decide when a streaming assistant row is
+	// written to Postgres. Both are seams for tests.
+	partialInterval time.Duration
+	partialChars    int
 
 	schemaVersion    string
 	push             PushNotifier
@@ -147,6 +164,8 @@ type Options struct {
 	ReminderInterval     time.Duration
 	Prices               *pricing.Table
 	DailyBudgetUSD       float64
+	PartialInterval      time.Duration
+	PartialChars         int
 }
 
 // New builds the Echo application with all routes registered.
@@ -164,7 +183,7 @@ func New(opts Options) *echo.Echo {
 		version:         opts.Version,
 		dataDir:         opts.DataDir,
 		now:             opts.Now,
-		hub:             newRoomHub(),
+		hub:             live.New(),
 		approvalTimeout: opts.ApprovalTimeout,
 		approvalFixture: opts.ApprovalFixture,
 		schemaVersion:   opts.SchemaVersion,
@@ -188,6 +207,18 @@ func New(opts Options) *echo.Echo {
 	if s.reminderInterval == 0 {
 		s.reminderInterval = 30 * time.Second
 	}
+	s.partialInterval = opts.PartialInterval
+	if s.partialInterval == 0 {
+		s.partialInterval = 2 * time.Second
+	}
+	s.partialChars = opts.PartialChars
+	if s.partialChars == 0 {
+		s.partialChars = 400
+	}
+
+	// A row still marked streaming can only be the remains of a process that
+	// died mid-turn. Mark it before anything reads the room.
+	s.recoverInterrupted(context.Background())
 
 	e := echo.New()
 	e.HideBanner = true
@@ -207,6 +238,7 @@ func New(opts Options) *echo.Echo {
 	e.POST("/api/rooms/:id/archive", s.archiveRoom)
 	e.PATCH("/api/rooms/:id/prompt", s.updateRoomPrompt)
 	e.GET("/api/rooms/:id/messages", s.listMessages)
+	e.GET("/api/rooms/:id/events", s.roomEvents)
 	e.POST("/api/rooms/:id/messages", s.streamMessage)
 	e.POST("/api/rooms/:id/messages/:mid/retry", s.retryMessage)
 	e.GET("/api/rooms/:id/export.md", s.exportRoom)
@@ -306,8 +338,31 @@ type roomView struct {
 	Name             string     `json:"name"`
 	Topic            string     `json:"topic"`
 	PendingApprovals int64      `json:"pending_approvals"`
+	Run              *runView   `json:"run"`
 	CreatedAt        time.Time  `json:"created_at"`
 	ArchivedAt       *time.Time `json:"archived_at,omitempty"`
+}
+
+// runView is the cold-load truth: enough for a working dot and a clock without
+// opening any stream. continuation is the attempt number of a live follow-up
+// (0 for a normal turn), chain its root message id.
+type runView struct {
+	ID           string    `json:"id"`
+	Status       string    `json:"status"`
+	StartedAt    time.Time `json:"started_at"`
+	Continuation int32     `json:"continuation"`
+	Chain        string    `json:"chain,omitempty"`
+}
+
+func runViewOf(row *store.Run) *runView {
+	if row == nil {
+		return nil
+	}
+	return &runView{
+		ID:        row.RunID,
+		Status:    row.Status,
+		StartedAt: row.StartedAt,
+	}
 }
 
 func viewRoom(r store.Room) roomView {
@@ -374,6 +429,7 @@ type messageView struct {
 	RoomID      string           `json:"room_id"`
 	Role        string           `json:"role"`
 	Body        string           `json:"body"`
+	State       string           `json:"state"`
 	RunID       *string          `json:"run_id,omitempty"`
 	Meta        json.RawMessage  `json:"meta,omitempty"`
 	Attachments []attachmentView `json:"attachments"`
@@ -394,6 +450,7 @@ func viewMessage(m store.Message, attachments []store.File) messageView {
 		RoomID:      m.RoomID.String(),
 		Role:        m.Role,
 		Body:        m.Body,
+		State:       m.State,
 		RunID:       m.RunID,
 		Meta:        meta,
 		Attachments: views,

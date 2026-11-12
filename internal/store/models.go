@@ -81,6 +81,7 @@ type Message struct {
 	CreatedAt    time.Time
 	Meta         []byte
 	SearchVector []byte
+	State        string
 }
 
 type PushSubscription struct {

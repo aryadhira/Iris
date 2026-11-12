@@ -24,7 +24,7 @@ import (
 	"github.com/aryadhira/iris/internal/webpush"
 )
 
-const version = "0.1.0-p8"
+const version = "0.1.0-p10"
 
 func main() {
 	if err := run(); err != nil {

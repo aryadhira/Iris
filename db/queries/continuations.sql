@@ -13,6 +13,13 @@ WHERE room_id = $1
   AND status IN ('pending', 'running')
 ORDER BY due_at ASC, created_at ASC;
 
+-- name: ListOpenContinuations :many
+-- A cold room payload needs to know that a chain is waiting, without one
+-- request per room.
+SELECT * FROM continuations
+WHERE status IN ('pending', 'running')
+ORDER BY due_at ASC, created_at ASC;
+
 -- name: ListContinuationsForChain :many
 SELECT * FROM continuations
 WHERE chain_id = $1

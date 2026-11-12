@@ -131,6 +131,62 @@ describe('room store', () => {
     expect(store.state.loaded).toBe(true)
   })
 
+
+  it('hides a streaming stored row and renders its body as the live bubble', async () => {
+    const streaming: StoredMessage = {
+      ...stored('a-stream', 'assistant', 'sedang menulis', 9),
+      state: 'streaming',
+    }
+    const { deps } = makeDeps({
+      list: [[streaming, stored('u1', 'user', 'halo', 1)]],
+      stream: [],
+    })
+    const store = createRoomStore(
+      ROOM,
+      deps,
+      {
+        run: {
+          id: 'run-1',
+          status: 'running',
+          started_at: '2026-11-12T10:59:00Z',
+          continuation: 0,
+        },
+      },
+    )
+    await store.load()
+    expect(store.state.messages.map((m) => m.id)).toEqual(['u1'])
+    expect(store.state.streamingText).toBe('sedang menulis')
+    expect(store.state.phase).toBe('streaming')
+  })
+
+  it('renders a late-join snapshot and the done that follows it', async () => {
+    const final = [stored('a2', 'assistant', 'selesai', 9), stored('u1', 'user', 'halo', 1)]
+    const { deps } = makeDeps({ list: [[stored('u1', 'user', 'halo', 1)], final, final], stream: [] })
+    let calls = 0
+    deps.openEvents = async () => {
+      calls += 1
+      if (calls > 1) return new Promise<Response>(() => {})
+      return new Response(
+        sse([
+          'event: snapshot\ndata: {"run":{"id":"run-1","status":"running","started_at":"2026-11-12T11:00:00Z","continuation":0},"partial":"se","approvals":[]}\n\n',
+          'event: delta\ndata: {"text":"lesai"}\n\n',
+          'event: done\ndata: {"messageId":"a2"}\n\n',
+        ]),
+        { status: 200 },
+      )
+    }
+    const store = createRoomStore(ROOM, deps)
+    await store.load()
+    store.startLive()
+    await tick()
+    await tick()
+    await tick()
+    expect(store.state.streamingText).toBe('')
+    expect(store.state.phase).toBe('idle')
+    expect(store.state.messages.some((m) => m.id === 'a2')).toBe(true)
+    store.dispose()
+  })
+
   it('does not duplicate a stored message the stream repeats', async () => {
     const first = [stored('u1', 'user', 'halo', 1)]
     const afterTurn = [

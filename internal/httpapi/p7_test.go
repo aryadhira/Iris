@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/aryadhira/iris/internal/auth"
+	"github.com/aryadhira/iris/internal/live"
 	"github.com/aryadhira/iris/internal/store"
 	"github.com/aryadhira/iris/internal/webpush"
 )
@@ -50,7 +51,7 @@ func p7Server(st *fakeStore, now time.Time, boot time.Time, push PushNotifier) *
 		now:              func() time.Time { return now },
 		bootTime:         boot,
 		reminderLoc:      time.FixedZone("WIB", 7*60*60),
-		hub:              newRoomHub(),
+		hub:              live.New(),
 		push:             push,
 		reminderInterval: 30 * time.Second,
 	}

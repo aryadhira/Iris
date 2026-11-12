@@ -9,6 +9,7 @@ import type {
   ChatMessage,
   Continuation,
   FileAttachment,
+  RoomRun,
   StoredMessage,
   TurnPhase,
 } from '../lib/types'
@@ -28,6 +29,7 @@ export interface RoomStoreDeps {
     attachmentIds: string[],
     signal: AbortSignal,
   ) => Promise<Response>
+  openEvents: (roomId: string, signal: AbortSignal) => Promise<Response>
   retryMessage: (roomId: string, messageId: string, signal: AbortSignal) => Promise<Response>
   sleep: (ms: number) => Promise<void>
   reconnectDelays: number[]
@@ -44,6 +46,7 @@ export const liveDeps: RoomStoreDeps = {
   stopRoom: (roomId) => api.stopRoom(roomId),
   sendMessage: (roomId, text, attachmentIds, signal) =>
     api.sendMessage(roomId, text, attachmentIds, signal),
+  openEvents: (roomId, signal) => api.openRoomEvents(roomId, signal),
   retryMessage: (roomId, messageId, signal) => api.retryMessage(roomId, messageId, signal),
   sleep: (ms) => new Promise((resolve) => window.setTimeout(resolve, ms)),
   // Roughly 35 s of patience: long enough for a stored reply, short enough
@@ -63,8 +66,33 @@ function oldestFirst(rows: StoredMessage[]): StoredMessage[] {
   return rows.slice().reverse()
 }
 
+/** A streaming row belongs in the live bubble, never in the settled transcript. */
+function visibleOldestFirst(rows: StoredMessage[]): StoredMessage[] {
+  return oldestFirst(rows).filter((row) => row.state !== 'streaming')
+}
+
+const LIVE_RUN_STATUSES = new Set([
+  'queued',
+  'running',
+  'waiting_for_approval',
+  'stopping',
+])
+
+function isRunLive(run: RoomRun | null | undefined): boolean {
+  return Boolean(run && LIVE_RUN_STATUSES.has(run.status))
+}
+
+export interface LiveSnapshot {
+  run?: RoomRun | null
+  partial?: string
+  approvals?: Approval[]
+  reminders_due?: number
+}
+
 export interface RoomStoreOptions {
   archived?: boolean
+  /** The cold-load run from GET /api/rooms/{id}; the header uses it before any stream. */
+  run?: RoomRun | null
 }
 
 export function createRoomStore(
@@ -83,6 +111,7 @@ export function createRoomStore(
     loadingOlder: false,
 
     phase: 'idle' as TurnPhase,
+    run: (options.run ?? null) as RoomRun | null,
     streamingText: '',
     currentTool: '',
     turnStartedAt: 0,
@@ -109,6 +138,20 @@ export function createRoomStore(
   // decides whether it is an em dash or part of a command-line flag.
   let cleaner: ReplyStream | null = null
   let disposed = false
+  let liveController: AbortController | null = null
+  let livePromise: Promise<void> | null = null
+  let liveConnected = false
+
+  function applyRun(run: RoomRun | null): void {
+    state.run = run
+    if (run && isRunLive(run)) {
+      state.phase = 'streaming'
+      const started = Date.parse(run.started_at)
+      if (Number.isFinite(started)) state.turnStartedAt = started
+    }
+  }
+
+  applyRun(options.run ?? null)
 
   function resetTurn(): void {
     cleaner = null
@@ -138,8 +181,16 @@ export function createRoomStore(
     state.loadError = ''
     try {
       const rows = await d.listMessages(roomId)
-      state.messages = mergeStored([], oldestFirst(rows))
+      const visible = visibleOldestFirst(rows)
+      state.messages = mergeStored([], visible)
       state.canLoadOlder = rows.length >= PAGE_SIZE
+      // A reload mid-turn must show what has been written so far. The live
+      // snapshot will replace this with the exact hub text a moment later.
+      const streamingRow = oldestFirst(rows).find((row) => row.state === 'streaming')
+      if (streamingRow) {
+        state.streamingText = streamingRow.body
+        if (isRunLive(state.run)) state.phase = 'streaming'
+      }
       state.loaded = true
       await refreshContinuation()
       await refreshApprovals()
@@ -155,7 +206,7 @@ export function createRoomStore(
     state.loadingOlder = true
     try {
       const rows = await d.listMessages(roomId, state.messages[0].createdAt)
-      const older = mergeStored([], oldestFirst(rows))
+      const older = mergeStored([], visibleOldestFirst(rows))
       const known = new Set(state.messages.map((m) => m.id))
       state.messages = [...older.filter((m) => !known.has(m.id)), ...state.messages]
       state.canLoadOlder = rows.length >= PAGE_SIZE
@@ -319,7 +370,7 @@ export function createRoomStore(
     // The server accepted the message; the composer may drop the uploaded
     // chips while the reply streams.
     onAccepted?.()
-    await consume(response)
+    await consume(response, !liveConnected)
     await refreshContinuation()
     await refreshApprovals()
   }
@@ -377,13 +428,194 @@ export function createRoomStore(
       return
     }
 
-    await consume(response)
+    await consume(response, !liveConnected)
     await reconcile()
     await refreshContinuation()
     await refreshApprovals()
   }
 
-  async function consume(response: Response): Promise<void> {
+  /** Attach to the room hub. Reconnects forever until the room unmounts. */
+  function startLive(): void {
+    if (disposed || livePromise) return
+    livePromise = runLive()
+  }
+
+  async function runLive(): Promise<void> {
+    let attempts = 0
+    while (!disposed) {
+      liveController = new AbortController()
+      try {
+        const response = await d.openEvents(roomId, liveController.signal)
+        if (!response.ok || !response.body) {
+          throw new Error(`events answered ${response.status}`)
+        }
+        liveConnected = true
+        if (state.connectionLost) {
+          state.connectionLost = false
+          if (state.phase === 'reconnecting') state.phase = 'streaming'
+        }
+        await consumeLive(response)
+      } catch {
+        // A dropped phone or a restarting irisd is not an error in the room:
+        // reconnect and let the snapshot tell the truth.
+      }
+      liveConnected = false
+      liveController = null
+      if (disposed) return
+      attempts += 1
+      if (isRunLive(state.run)) {
+        state.phase = 'reconnecting'
+        state.connectionLost = true
+      }
+      const delay =
+        d.reconnectDelays[Math.min(attempts, d.reconnectDelays.length - 1)] ?? 5000
+      await d.sleep(delay)
+    }
+  }
+
+  async function consumeLive(response: Response): Promise<void> {
+    const stream = response.body
+    if (!stream) return
+    const reader = stream.getReader()
+    const decoder = new TextDecoder()
+    const parser = new SseParser()
+    try {
+      while (!disposed) {
+        const { value, done } = await reader.read()
+        if (done) break
+        for (const frame of parser.feed(decoder.decode(value, { stream: true }))) {
+          handleLiveFrame(frame)
+        }
+      }
+      const tail = decoder.decode()
+      if (tail !== '') {
+        for (const frame of parser.feed(tail)) handleLiveFrame(frame)
+      }
+      for (const frame of parser.end()) handleLiveFrame(frame)
+    } finally {
+      try {
+        reader.releaseLock()
+      } catch {
+        // the stream is already gone
+      }
+    }
+  }
+
+  function handleLiveFrame(frame: SseFrame): void {
+    switch (frame.event) {
+      case 'snapshot': {
+        const payload = frameJson<LiveSnapshot>(frame)
+        if (!payload) return
+        applyRun(payload.run ?? null)
+        for (const approval of payload.approvals ?? []) upsertApproval(approval)
+        if (isRunLive(payload.run)) {
+          state.streamingText = payload.partial ?? ''
+          state.phase = 'streaming'
+          state.connectionLost = false
+          const started = payload.run ? Date.parse(payload.run.started_at) : NaN
+          if (Number.isFinite(started)) state.turnStartedAt = started
+        } else {
+          state.streamingText = ''
+          if (state.phase === 'streaming' || state.phase === 'reconnecting') {
+            state.phase = state.errorText === '' ? 'idle' : 'error'
+          }
+          state.currentTool = ''
+          state.turnStartedAt = 0
+          state.connectionLost = false
+          // A reconnect can land after the one `done` frame was published. The
+          // mirror is the fallback: adopt the final row instead of leaving the
+          // room without the answer until a manual reload.
+          void reconcile()
+        }
+        return
+      }
+      case 'delta': {
+        const payload = frameJson<{ text?: string }>(frame)
+        if (payload?.text) {
+          // The server already ran the reply cleaner; appending here must not
+          // clean a second time or it would swallow a legitimate em dash.
+          state.streamingText += payload.text
+          state.phase = 'streaming'
+          if (state.turnStartedAt === 0) state.turnStartedAt = d.now()
+        }
+        return
+      }
+      case 'tool': {
+        const payload = frameJson<{ name?: string; status?: string }>(frame)
+        if (payload?.name) state.currentTool = payload.name
+        return
+      }
+      case 'approval':
+      case 'approval.resolved': {
+        const payload = frameJson<Approval>(frame)
+        if (payload?.id) upsertApproval(payload)
+        return
+      }
+      case 'note': {
+        const payload = frameJson<{ body?: string }>(frame)
+        if (payload?.body) {
+          state.messages.push({
+            id: localId(),
+            role: 'system',
+            body: payload.body,
+            createdAt: new Date(d.now()).toISOString(),
+            local: true,
+          })
+          void reconcile()
+        }
+        return
+      }
+      case 'reminder': {
+        const payload = frameJson<{ due_at?: string }>(frame)
+        if (payload?.due_at) state.reminderNotice = reminderNotice(payload.due_at)
+        return
+      }
+      case 'done': {
+        const payload = frameJson<{ messageId?: string }>(frame)
+        void finishLive(payload?.messageId ?? '')
+        return
+      }
+      case 'error': {
+        const payload = frameJson<{ message?: string }>(frame)
+        state.errorText = humanizeServerError(payload?.message ?? '')
+        state.currentTool = ''
+        state.turnStartedAt = 0
+        state.phase = 'error'
+        return
+      }
+      default:
+        return
+    }
+  }
+
+  async function finishLive(messageId: string): Promise<void> {
+    const body = state.streamingText
+    cleaner = null
+    state.streamingText = ''
+    state.currentTool = ''
+    state.turnStartedAt = 0
+    state.connectionLost = false
+    state.run = null
+    if (state.errorText === '') state.phase = 'idle'
+    await reconcile()
+    if (
+      messageId !== '' &&
+      body.trim() !== '' &&
+      !state.messages.some((message) => message.id === messageId)
+    ) {
+      state.messages.push({
+        id: messageId,
+        role: 'assistant',
+        body,
+        state: 'done',
+        createdAt: new Date(d.now()).toISOString(),
+      })
+    }
+    await refreshContinuation()
+    await refreshApprovals()
+  }
+
+  async function consume(response: Response, render = true): Promise<void> {
     const stream = response.body
     if (!stream) {
       await settle('Balasan tidak bisa dibaca dari server.')
@@ -401,24 +633,24 @@ export function createRoomStore(
         if (done) break
         const chunk = decoder.decode(value, { stream: true })
         for (const frame of parser.feed(chunk)) {
-          if (handleFrame(frame)) sawDone = true
+          if (render && handleFrame(frame)) sawDone = true
         }
       }
       const tail = decoder.decode()
       if (tail !== '') {
         for (const frame of parser.feed(tail)) {
-          if (handleFrame(frame)) sawDone = true
+          if (render && handleFrame(frame)) sawDone = true
         }
       }
       for (const frame of parser.end()) {
-        if (handleFrame(frame)) sawDone = true
+        if (render && handleFrame(frame)) sawDone = true
       }
     } catch {
-      if (!disposed && state.phase !== 'idle') await recoverConnection()
+      if (render && !disposed && state.phase !== 'idle') await recoverConnection()
       return
     }
 
-    if (disposed) return
+    if (disposed || !render) return
 
     if (!sawDone) {
       const recovered = await settle(
@@ -505,6 +737,7 @@ export function createRoomStore(
     state.currentTool = ''
     state.turnStartedAt = 0
     state.connectionLost = false
+    state.run = null
     if (state.errorText === '') state.phase = 'idle'
     else state.phase = 'error'
   }
@@ -526,13 +759,14 @@ export function createRoomStore(
   async function settle(errorIfMissing: string): Promise<boolean> {
     try {
       const rows = await d.listMessages(roomId)
-      state.messages = mergeStored(state.messages, oldestFirst(rows))
+      state.messages = mergeStored(state.messages, visibleOldestFirst(rows))
       if (assistantAfterLastUser()) {
         cleaner = null
         state.streamingText = ''
         state.currentTool = ''
         state.turnStartedAt = 0
         state.connectionLost = false
+        state.run = null
         state.errorText = ''
         state.phase = 'idle'
         return true
@@ -547,7 +781,7 @@ export function createRoomStore(
   async function reconcile(): Promise<void> {
     try {
       const rows = await d.listMessages(roomId)
-      state.messages = mergeStored(state.messages, oldestFirst(rows))
+      state.messages = mergeStored(state.messages, visibleOldestFirst(rows))
     } catch {
       // The stream already showed the text; a stale mirror is not an error.
     }
@@ -568,7 +802,7 @@ export function createRoomStore(
       if (disposed) return
       try {
         const rows = await d.listMessages(roomId)
-        state.messages = mergeStored(state.messages, oldestFirst(rows))
+        state.messages = mergeStored(state.messages, visibleOldestFirst(rows))
         if (assistantAfterLastUser()) {
           cleaner = null
           state.streamingText = ''
@@ -598,7 +832,7 @@ export function createRoomStore(
     state.loadError = ''
     try {
       const rows = await d.listMessages(roomId)
-      state.messages = mergeStored(state.messages, oldestFirst(rows))
+      state.messages = mergeStored(state.messages, visibleOldestFirst(rows))
       if (assistantAfterLastUser() && state.phase === 'error') {
         state.errorText = ''
         state.phase = 'idle'
@@ -618,6 +852,7 @@ export function createRoomStore(
   function dispose(): void {
     disposed = true
     controller?.abort()
+    liveController?.abort()
   }
 
   return {
@@ -625,6 +860,7 @@ export function createRoomStore(
     state,
     load,
     loadOlder,
+    startLive,
     refreshContinuation,
     stopContinuation,
     refreshApprovals,

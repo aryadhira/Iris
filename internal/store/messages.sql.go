@@ -12,10 +12,63 @@ import (
 	"github.com/google/uuid"
 )
 
+const deleteStreamingMessage = `-- name: DeleteStreamingMessage :exec
+DELETE FROM messages
+WHERE id = $1
+  AND state = 'streaming'
+`
+
+func (q *Queries) DeleteStreamingMessage(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteStreamingMessage, id)
+	return err
+}
+
+const finalizeMessage = `-- name: FinalizeMessage :one
+UPDATE messages
+SET body = $2,
+    run_id = $3,
+    meta = $4,
+    state = $5
+WHERE id = $1
+RETURNING id, room_id, role, body, run_id, created_at, meta, search_vector, state
+`
+
+type FinalizeMessageParams struct {
+	ID    uuid.UUID
+	Body  string
+	RunID *string
+	Meta  []byte
+	State string
+}
+
+func (q *Queries) FinalizeMessage(ctx context.Context, arg FinalizeMessageParams) (Message, error) {
+	row := q.db.QueryRow(ctx, finalizeMessage,
+		arg.ID,
+		arg.Body,
+		arg.RunID,
+		arg.Meta,
+		arg.State,
+	)
+	var i Message
+	err := row.Scan(
+		&i.ID,
+		&i.RoomID,
+		&i.Role,
+		&i.Body,
+		&i.RunID,
+		&i.CreatedAt,
+		&i.Meta,
+		&i.SearchVector,
+		&i.State,
+	)
+	return i, err
+}
+
 const getLatestAssistantMessage = `-- name: GetLatestAssistantMessage :one
-SELECT id, room_id, role, body, run_id, created_at, meta, search_vector FROM messages
+SELECT id, room_id, role, body, run_id, created_at, meta, search_vector, state FROM messages
 WHERE room_id = $1
   AND role = 'assistant'
+  AND state = 'done'
 ORDER BY created_at DESC, id DESC
 LIMIT 1
 `
@@ -32,12 +85,13 @@ func (q *Queries) GetLatestAssistantMessage(ctx context.Context, roomID uuid.UUI
 		&i.CreatedAt,
 		&i.Meta,
 		&i.SearchVector,
+		&i.State,
 	)
 	return i, err
 }
 
 const getMessage = `-- name: GetMessage :one
-SELECT id, room_id, role, body, run_id, created_at, meta, search_vector FROM messages
+SELECT id, room_id, role, body, run_id, created_at, meta, search_vector, state FROM messages
 WHERE id = $1
 `
 
@@ -53,6 +107,32 @@ func (q *Queries) GetMessage(ctx context.Context, id uuid.UUID) (Message, error)
 		&i.CreatedAt,
 		&i.Meta,
 		&i.SearchVector,
+		&i.State,
+	)
+	return i, err
+}
+
+const getStreamingMessage = `-- name: GetStreamingMessage :one
+SELECT id, room_id, role, body, run_id, created_at, meta, search_vector, state FROM messages
+WHERE room_id = $1
+  AND state = 'streaming'
+ORDER BY created_at DESC, id DESC
+LIMIT 1
+`
+
+func (q *Queries) GetStreamingMessage(ctx context.Context, roomID uuid.UUID) (Message, error) {
+	row := q.db.QueryRow(ctx, getStreamingMessage, roomID)
+	var i Message
+	err := row.Scan(
+		&i.ID,
+		&i.RoomID,
+		&i.Role,
+		&i.Body,
+		&i.RunID,
+		&i.CreatedAt,
+		&i.Meta,
+		&i.SearchVector,
+		&i.State,
 	)
 	return i, err
 }
@@ -61,7 +141,7 @@ const insertMessage = `-- name: InsertMessage :one
 
 INSERT INTO messages (id, room_id, role, body, run_id, meta)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, room_id, role, body, run_id, created_at, meta, search_vector
+RETURNING id, room_id, role, body, run_id, created_at, meta, search_vector, state
 `
 
 type InsertMessageParams struct {
@@ -94,12 +174,13 @@ func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (M
 		&i.CreatedAt,
 		&i.Meta,
 		&i.SearchVector,
+		&i.State,
 	)
 	return i, err
 }
 
 const listAllMessages = `-- name: ListAllMessages :many
-SELECT id, room_id, role, body, run_id, created_at, meta, search_vector FROM messages
+SELECT id, room_id, role, body, run_id, created_at, meta, search_vector, state FROM messages
 WHERE room_id = $1
 ORDER BY created_at ASC, id ASC
 `
@@ -122,6 +203,7 @@ func (q *Queries) ListAllMessages(ctx context.Context, roomID uuid.UUID) ([]Mess
 			&i.CreatedAt,
 			&i.Meta,
 			&i.SearchVector,
+			&i.State,
 		); err != nil {
 			return nil, err
 		}
@@ -134,7 +216,7 @@ func (q *Queries) ListAllMessages(ctx context.Context, roomID uuid.UUID) ([]Mess
 }
 
 const listMessages = `-- name: ListMessages :many
-SELECT id, room_id, role, body, run_id, created_at, meta, search_vector FROM messages
+SELECT id, room_id, role, body, run_id, created_at, meta, search_vector, state FROM messages
 WHERE room_id = $1
   AND created_at < COALESCE($2::timestamptz, 'infinity'::timestamptz)
 ORDER BY created_at DESC, id DESC
@@ -165,6 +247,7 @@ func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]M
 			&i.CreatedAt,
 			&i.Meta,
 			&i.SearchVector,
+			&i.State,
 		); err != nil {
 			return nil, err
 		}
@@ -177,7 +260,7 @@ func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]M
 }
 
 const listMessagesAfter = `-- name: ListMessagesAfter :many
-SELECT id, room_id, role, body, run_id, created_at, meta, search_vector FROM messages
+SELECT id, room_id, role, body, run_id, created_at, meta, search_vector, state FROM messages
 WHERE room_id = $1
   AND (created_at > $2 OR (created_at = $2 AND id > $3::uuid))
 ORDER BY created_at ASC, id ASC
@@ -210,6 +293,7 @@ func (q *Queries) ListMessagesAfter(ctx context.Context, arg ListMessagesAfterPa
 			&i.CreatedAt,
 			&i.Meta,
 			&i.SearchVector,
+			&i.State,
 		); err != nil {
 			return nil, err
 		}
@@ -225,7 +309,7 @@ const markMessageSuperseded = `-- name: MarkMessageSuperseded :one
 UPDATE messages
 SET meta = jsonb_set(COALESCE(meta, '{}'::jsonb), '{superseded}', 'true'::jsonb)
 WHERE id = $1
-RETURNING id, room_id, role, body, run_id, created_at, meta, search_vector
+RETURNING id, room_id, role, body, run_id, created_at, meta, search_vector, state
 `
 
 // The old reply is dimmed and labelled, never deleted: hiding a failure would
@@ -242,8 +326,48 @@ func (q *Queries) MarkMessageSuperseded(ctx context.Context, id uuid.UUID) (Mess
 		&i.CreatedAt,
 		&i.Meta,
 		&i.SearchVector,
+		&i.State,
 	)
 	return i, err
+}
+
+const markStreamingMessagesInterrupted = `-- name: MarkStreamingMessagesInterrupted :many
+UPDATE messages
+SET state = 'interrupted'
+WHERE state = 'streaming'
+RETURNING id, room_id, role, body, run_id, created_at, meta, search_vector, state
+`
+
+// On boot a streaming row can only mean irisd died mid-turn. Mark it, never
+// delete it and never pretend it completed.
+func (q *Queries) MarkStreamingMessagesInterrupted(ctx context.Context) ([]Message, error) {
+	rows, err := q.db.Query(ctx, markStreamingMessagesInterrupted)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Message{}
+	for rows.Next() {
+		var i Message
+		if err := rows.Scan(
+			&i.ID,
+			&i.RoomID,
+			&i.Role,
+			&i.Body,
+			&i.RunID,
+			&i.CreatedAt,
+			&i.Meta,
+			&i.SearchVector,
+			&i.State,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const searchMessages = `-- name: SearchMessages :many
@@ -262,6 +386,9 @@ SELECT
 FROM messages m
 JOIN rooms r ON r.id = m.room_id
 WHERE m.search_vector @@ plainto_tsquery('indonesian'::regconfig, $1::text)
+  -- A streaming or interrupted body is not a finished answer; never surface it
+  -- as a search hit as if Boss could rely on it.
+  AND m.state = 'done'
 ORDER BY m.created_at DESC, m.id DESC
 LIMIT $2::int
 `
@@ -307,4 +434,75 @@ func (q *Queries) SearchMessages(ctx context.Context, arg SearchMessagesParams) 
 		return nil, err
 	}
 	return items, nil
+}
+
+const setMessageRunID = `-- name: SetMessageRunID :exec
+UPDATE messages
+SET run_id = $2
+WHERE id = $1
+  AND state = 'streaming'
+`
+
+type SetMessageRunIDParams struct {
+	ID    uuid.UUID
+	RunID *string
+}
+
+func (q *Queries) SetMessageRunID(ctx context.Context, arg SetMessageRunIDParams) error {
+	_, err := q.db.Exec(ctx, setMessageRunID, arg.ID, arg.RunID)
+	return err
+}
+
+const startStreamingMessage = `-- name: StartStreamingMessage :one
+INSERT INTO messages (id, room_id, role, body, run_id, meta, state)
+VALUES ($1, $2, 'assistant', '', $3, $4, 'streaming')
+RETURNING id, room_id, role, body, run_id, created_at, meta, search_vector, state
+`
+
+type StartStreamingMessageParams struct {
+	ID     uuid.UUID
+	RoomID uuid.UUID
+	RunID  *string
+	Meta   []byte
+}
+
+// A turn owns its assistant row from its first moment. A phone that reloads
+// mid-turn finds a row marked streaming instead of an empty room.
+func (q *Queries) StartStreamingMessage(ctx context.Context, arg StartStreamingMessageParams) (Message, error) {
+	row := q.db.QueryRow(ctx, startStreamingMessage,
+		arg.ID,
+		arg.RoomID,
+		arg.RunID,
+		arg.Meta,
+	)
+	var i Message
+	err := row.Scan(
+		&i.ID,
+		&i.RoomID,
+		&i.Role,
+		&i.Body,
+		&i.RunID,
+		&i.CreatedAt,
+		&i.Meta,
+		&i.SearchVector,
+		&i.State,
+	)
+	return i, err
+}
+
+const updateMessagePartial = `-- name: UpdateMessagePartial :exec
+UPDATE messages
+SET body = $2
+WHERE id = $1
+  AND state = 'streaming'
+`
+
+type UpdateMessagePartialParams struct {
+	ID   uuid.UUID
+	Body string
+}
+
+func (q *Queries) UpdateMessagePartial(ctx context.Context, arg UpdateMessagePartialParams) error {
+	_, err := q.db.Exec(ctx, updateMessagePartial, arg.ID, arg.Body)
+	return err
 }

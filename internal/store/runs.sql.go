@@ -12,6 +12,28 @@ import (
 	"github.com/google/uuid"
 )
 
+const getLatestRun = `-- name: GetLatestRun :one
+SELECT run_id, room_id, session_id, status, started_at, updated_at, finished_at FROM runs
+WHERE room_id = $1
+ORDER BY started_at DESC, run_id DESC
+LIMIT 1
+`
+
+func (q *Queries) GetLatestRun(ctx context.Context, roomID uuid.UUID) (Run, error) {
+	row := q.db.QueryRow(ctx, getLatestRun, roomID)
+	var i Run
+	err := row.Scan(
+		&i.RunID,
+		&i.RoomID,
+		&i.SessionID,
+		&i.Status,
+		&i.StartedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+	)
+	return i, err
+}
+
 const getRun = `-- name: GetRun :one
 SELECT run_id, room_id, session_id, status, started_at, updated_at, finished_at FROM runs
 WHERE run_id = $1
@@ -41,6 +63,80 @@ ORDER BY started_at ASC, run_id ASC
 
 func (q *Queries) ListActiveRuns(ctx context.Context, roomID uuid.UUID) ([]Run, error) {
 	rows, err := q.db.Query(ctx, listActiveRuns, roomID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Run{}
+	for rows.Next() {
+		var i Run
+		if err := rows.Scan(
+			&i.RunID,
+			&i.RoomID,
+			&i.SessionID,
+			&i.Status,
+			&i.StartedAt,
+			&i.UpdatedAt,
+			&i.FinishedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLatestRuns = `-- name: ListLatestRuns :many
+SELECT DISTINCT ON (room_id) run_id, room_id, session_id, status, started_at, updated_at, finished_at
+FROM runs
+ORDER BY room_id, started_at DESC, run_id DESC
+`
+
+// One row per room for a cold load of the sidebar. The room payload only shows
+// it while it is live (or interrupted), never as a stale "done".
+func (q *Queries) ListLatestRuns(ctx context.Context) ([]Run, error) {
+	rows, err := q.db.Query(ctx, listLatestRuns)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Run{}
+	for rows.Next() {
+		var i Run
+		if err := rows.Scan(
+			&i.RunID,
+			&i.RoomID,
+			&i.SessionID,
+			&i.Status,
+			&i.StartedAt,
+			&i.UpdatedAt,
+			&i.FinishedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markActiveRunsInterrupted = `-- name: MarkActiveRunsInterrupted :many
+UPDATE runs
+SET status = 'interrupted',
+    updated_at = $1,
+    finished_at = $1
+WHERE status IN ('queued', 'running', 'waiting_for_approval', 'stopping')
+RETURNING run_id, room_id, session_id, status, started_at, updated_at, finished_at
+`
+
+// A run that was live when irisd died cannot still be running. Say so.
+func (q *Queries) MarkActiveRunsInterrupted(ctx context.Context, updatedAt time.Time) ([]Run, error) {
+	rows, err := q.db.Query(ctx, markActiveRunsInterrupted, updatedAt)
 	if err != nil {
 		return nil, err
 	}

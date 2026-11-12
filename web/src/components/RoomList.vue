@@ -31,6 +31,13 @@ function isActive(id: string): boolean {
   return activeId.value === id
 }
 
+function isRunning(room: { run?: { status: string } | null }): boolean {
+  return (
+    room.run != null &&
+    ['queued', 'running', 'waiting_for_approval', 'stopping'].includes(room.run.status)
+  )
+}
+
 function startArchive(id: string): void {
   archiveError.value = ''
   confirmingId.value = id
@@ -147,6 +154,13 @@ onBeforeUnmount(() => {
                 <span class="truncate text-[13.5px]" :class="isActive(room.id) ? 'text-ink' : 'text-muted'">
                   {{ room.name }}
                 </span>
+                <span
+                  v-if="isRunning(room)"
+                  class="h-2 w-2 shrink-0 animate-pulse rounded-full bg-orchid"
+                  data-testid="room-run-dot"
+                  aria-label="sedang bekerja"
+                  title="sedang bekerja"
+                />
                 <span
                   v-if="(room.pending_approvals ?? 0) > 0"
                   class="h-2 w-2 shrink-0 rounded-full bg-orchid"

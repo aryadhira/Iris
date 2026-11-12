@@ -1,0 +1,65 @@
+[
+  {
+    "scope": "390",
+    "name": "two rooms exist and A is open",
+    "pass": true,
+    "detail": "7yw9lq8ahhg",
+    "at": "2026-11-12T14:40:40.356Z"
+  },
+  {
+    "scope": "390",
+    "name": "A shows bekerja with a running clock",
+    "pass": true,
+    "detail": "bekerja · 0:04",
+    "at": "2026-11-12T14:40:45.631Z"
+  },
+  {
+    "scope": "390",
+    "name": "sidebar shows the active-run dot at 390 px",
+    "pass": true,
+    "detail": "",
+    "at": "2026-11-12T14:40:45.643Z"
+  },
+  {
+    "scope": "390",
+    "name": "returning to A did not reload the document",
+    "pass": true,
+    "detail": "7yw9lq8ahhg",
+    "at": "2026-11-12T14:40:48.919Z"
+  },
+  {
+    "scope": "390",
+    "name": "A reopens mid-turn with bekerja and the clock still counting",
+    "pass": true,
+    "detail": "bekerja · 0:04 -> bekerja · 0:08",
+    "at": "2026-11-12T14:40:48.921Z"
+  },
+  {
+    "scope": "390",
+    "name": "the partial bubble is visible immediately",
+    "pass": true,
+    "detail": "",
+    "at": "2026-11-12T14:40:48.921Z"
+  },
+  {
+    "scope": "390",
+    "name": "the header stops claiming to work when the turn ends",
+    "pass": true,
+    "detail": "idle",
+    "at": "2026-11-12T14:41:24.232Z"
+  },
+  {
+    "scope": "390",
+    "name": "the final answer appears without a reload",
+    "pass": true,
+    "detail": "Hermes · 21.40\n\nSaya sedang mengerjakan tugas yang butuh waktu.\n\nPerintah sleep ",
+    "at": "2026-11-12T14:41:24.237Z"
+  },
+  {
+    "scope": "390",
+    "name": "the assistant answer shows no STATUS line",
+    "pass": true,
+    "detail": "",
+    "at": "2026-11-12T14:41:24.237Z"
+  }
+]

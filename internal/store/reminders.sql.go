@@ -85,7 +85,7 @@ WITH claimed AS (
 INSERT INTO messages (id, room_id, role, body, meta)
 SELECT $1, claimed.room_id, 'system', $2, '{}'::jsonb
 FROM claimed
-RETURNING id, room_id, role, body, run_id, created_at, meta, search_vector
+RETURNING id, room_id, role, body, run_id, created_at, meta, search_vector, state
 `
 
 type FireReminderParams struct {
@@ -115,6 +115,7 @@ func (q *Queries) FireReminder(ctx context.Context, arg FireReminderParams) (Mes
 		&i.CreatedAt,
 		&i.Meta,
 		&i.SearchVector,
+		&i.State,
 	)
 	return i, err
 }

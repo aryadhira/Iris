@@ -204,9 +204,101 @@ func (f *fakeStore) InsertMessage(_ context.Context, arg store.InsertMessagePara
 		RunID:     arg.RunID,
 		Meta:      arg.Meta,
 		CreatedAt: time.Now(),
+		State:     "done",
 	}
 	f.messages = append(f.messages, row)
 	return row, nil
+}
+
+func (f *fakeStore) StartStreamingMessage(_ context.Context, arg store.StartStreamingMessageParams) (store.Message, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	row := store.Message{
+		ID:        arg.ID,
+		RoomID:    arg.RoomID,
+		Role:      "assistant",
+		Body:      "",
+		RunID:     arg.RunID,
+		Meta:      arg.Meta,
+		CreatedAt: time.Now(),
+		State:     "streaming",
+	}
+	f.messages = append(f.messages, row)
+	return row, nil
+}
+
+func (f *fakeStore) UpdateMessagePartial(_ context.Context, arg store.UpdateMessagePartialParams) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.messages {
+		if f.messages[i].ID == arg.ID && f.messages[i].State == "streaming" {
+			f.messages[i].Body = arg.Body
+		}
+	}
+	return nil
+}
+
+func (f *fakeStore) SetMessageRunID(_ context.Context, arg store.SetMessageRunIDParams) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.messages {
+		if f.messages[i].ID == arg.ID && f.messages[i].State == "streaming" {
+			f.messages[i].RunID = arg.RunID
+		}
+	}
+	return nil
+}
+
+func (f *fakeStore) FinalizeMessage(_ context.Context, arg store.FinalizeMessageParams) (store.Message, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.messages {
+		if f.messages[i].ID == arg.ID {
+			f.messages[i].Body = arg.Body
+			f.messages[i].RunID = arg.RunID
+			f.messages[i].Meta = arg.Meta
+			f.messages[i].State = arg.State
+			return f.messages[i], nil
+		}
+	}
+	return store.Message{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) DeleteStreamingMessage(_ context.Context, id uuid.UUID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.messages {
+		if f.messages[i].ID == id && f.messages[i].State == "streaming" {
+			f.messages = append(f.messages[:i], f.messages[i+1:]...)
+			return nil
+		}
+	}
+	return nil
+}
+
+func (f *fakeStore) GetStreamingMessage(_ context.Context, roomID uuid.UUID) (store.Message, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := len(f.messages) - 1; i >= 0; i-- {
+		row := f.messages[i]
+		if row.RoomID == roomID && row.State == "streaming" {
+			return row, nil
+		}
+	}
+	return store.Message{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) MarkStreamingMessagesInterrupted(_ context.Context) ([]store.Message, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]store.Message, 0)
+	for i := range f.messages {
+		if f.messages[i].State == "streaming" {
+			f.messages[i].State = "interrupted"
+			out = append(out, f.messages[i])
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeStore) ListMessages(_ context.Context, arg store.ListMessagesParams) ([]store.Message, error) {
@@ -384,6 +476,19 @@ func (f *fakeStore) ListPendingContinuations(_ context.Context, roomID uuid.UUID
 	out := make([]store.Continuation, 0)
 	for _, row := range f.continuations {
 		if row.RoomID == roomID && (row.Status == "pending" || row.Status == "running") {
+			out = append(out, row)
+		}
+	}
+	sortContinuations(out)
+	return out, nil
+}
+
+func (f *fakeStore) ListOpenContinuations(_ context.Context) ([]store.Continuation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]store.Continuation, 0)
+	for _, row := range f.continuations {
+		if row.Status == "pending" || row.Status == "running" {
 			out = append(out, row)
 		}
 	}
@@ -572,6 +677,62 @@ func (f *fakeStore) GetRun(_ context.Context, runID string) (store.Run, error) {
 		return store.Run{}, pgx.ErrNoRows
 	}
 	return row, nil
+}
+
+func (f *fakeStore) GetLatestRun(_ context.Context, roomID uuid.UUID) (store.Run, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var latest store.Run
+	found := false
+	for _, row := range f.runs {
+		if row.RoomID != roomID {
+			continue
+		}
+		if !found || row.StartedAt.After(latest.StartedAt) ||
+			(row.StartedAt.Equal(latest.StartedAt) && row.RunID > latest.RunID) {
+			latest = row
+			found = true
+		}
+	}
+	if !found {
+		return store.Run{}, pgx.ErrNoRows
+	}
+	return latest, nil
+}
+
+func (f *fakeStore) ListLatestRuns(context.Context) ([]store.Run, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	latest := map[uuid.UUID]store.Run{}
+	for _, row := range f.runs {
+		existing, ok := latest[row.RoomID]
+		if !ok || row.StartedAt.After(existing.StartedAt) ||
+			(row.StartedAt.Equal(existing.StartedAt) && row.RunID > existing.RunID) {
+			latest[row.RoomID] = row
+		}
+	}
+	out := make([]store.Run, 0, len(latest))
+	for _, row := range latest {
+		out = append(out, row)
+	}
+	return out, nil
+}
+
+func (f *fakeStore) MarkActiveRunsInterrupted(_ context.Context, updatedAt time.Time) ([]store.Run, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]store.Run, 0)
+	for id, row := range f.runs {
+		switch row.Status {
+		case "queued", "running", "waiting_for_approval", "stopping":
+			row.Status = "interrupted"
+			row.UpdatedAt = updatedAt
+			row.FinishedAt = &updatedAt
+			f.runs[id] = row
+			out = append(out, row)
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeStore) ListActiveRuns(_ context.Context, roomID uuid.UUID) ([]store.Run, error) {

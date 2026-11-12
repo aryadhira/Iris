@@ -99,10 +99,29 @@ func (s *Server) listRooms(c echo.Context) error {
 	for _, row := range counts {
 		byRoom[row.RoomID] = row.Count
 	}
+	runs := make(map[uuid.UUID]*store.Run)
+	if latest, err := s.store.ListLatestRuns(ctx); err != nil {
+		s.logger.Error("cannot list latest runs", "error", err)
+	} else {
+		for i := range latest {
+			runs[latest[i].RoomID] = activeRun(&latest[i])
+		}
+	}
+	chains := make(map[uuid.UUID]store.Continuation)
+	if open, err := s.store.ListOpenContinuations(ctx); err != nil {
+		s.logger.Error("cannot list open continuations", "error", err)
+	} else {
+		for _, row := range open {
+			if _, exists := chains[row.RoomID]; !exists {
+				chains[row.RoomID] = row
+			}
+		}
+	}
 	rooms := make([]roomView, 0, len(rows))
 	for _, row := range rows {
 		view := viewRoom(row)
 		view.PendingApprovals = byRoom[row.ID]
+		applyRun(&view, runs[row.ID], chains[row.ID])
 		rooms = append(rooms, view)
 	}
 	return c.JSON(http.StatusOK, map[string]any{"rooms": rooms})
@@ -130,7 +149,27 @@ func (s *Server) getRoom(c echo.Context) error {
 			}
 		}
 	}
+	var latest *store.Run
+	if run, err := s.store.GetLatestRun(c.Request().Context(), row.ID); err == nil {
+		latest = &run
+	}
+	var chain store.Continuation
+	if rows, err := s.store.ListPendingContinuations(c.Request().Context(), row.ID); err == nil && len(rows) > 0 {
+		chain = rows[0]
+	}
+	applyRun(&view, latest, chain)
 	return c.JSON(http.StatusOK, map[string]any{"room": view})
+}
+
+// applyRun fills the cold-load run and continuation index. An open follow-up
+// exists even while no run is live, which is exactly "menunggu proses".
+func applyRun(view *roomView, run *store.Run, chain store.Continuation) {
+	view.Run = runViewOf(activeRun(run))
+	if view.Run == nil || chain.ID == uuid.Nil {
+		return
+	}
+	view.Run.Continuation = chain.Attempt
+	view.Run.Chain = chain.ChainID.String()
 }
 
 func (s *Server) archiveRoom(c echo.Context) error {

@@ -67,6 +67,30 @@ Hermes'. Room history is stored by Hermes (sessions) and mirrored for search. Ea
 Every path is resolved through one guard: absolute paths, `..`, the room root itself and symlinks are
 refused, so one room cannot read another.
 
+## Live rooms and partial replies
+
+A room is not a request. `internal/live` keeps one hub per room: subscribers are every attached
+`GET /api/rooms/{id}/events` stream, and the turn publishes to that hub instead of writing only to the POST
+that started it. Publishing is non-blocking; a subscriber whose queue is full is removed, not waited on, and
+can reattach for a fresh snapshot. The POST still streams for compatibility, but it is now just another
+subscriber, so the phone and the laptop cannot disagree about what happened.
+
+An SSE attachment receives a `snapshot` first (`run`, `partial`, `approvals`, `reminders_due`), then live
+`delta`, `tool`, `approval`, `approval.resolved`, `note` and `done` frames, with a comment every 15 s. The
+snapshot is taken under the same lock that appends delta text, so text already streamed appears once: in the
+snapshot or in a delta, never both.
+
+The assistant row is created when the turn starts with `state = 'streaming'`, updated every ~2 s or ~400
+characters, and finalised through the reply cleaner with `state = 'done'`. If irisd dies mid-turn, the row is
+left `streaming`; on boot it becomes `interrupted`, the live run becomes `interrupted`, and one visible
+"terputus" line is written per affected room. Nothing is deleted and nothing claims to be complete. Search
+only returns `done` rows; export labels streaming/interrupted rows; the speaker is hidden for either.
+
+`GET /api/rooms` and `GET /api/rooms/{id}` carry `run` while it is live or visibly interrupted. A finished
+run is history and is not returned, so the sidebar dot and the header clock come from a cold load without
+opening a stream. An open continuation also carries its attempt index on the run; "menunggu proses" is read
+from the continuation row because at that moment there is no active run to attach it to.
+
 ## Files and artifacts
 
 Uploads stream into `inbox/<uuid>-<sanitised name>`; the MIME is sniffed from the bytes, never trusted from

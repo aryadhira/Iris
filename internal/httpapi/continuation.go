@@ -265,12 +265,39 @@ func (s *Server) processContinuation(ctx context.Context, row store.Continuation
 		row.Attempt, continuation.MaxPerChain,
 	))
 
-	outcome, streamErr := s.runTurn(ctx, room, continuationPrompt(int(row.Attempt), procs), nil)
+	// A continuation is a real turn too: a phone may attach mid-follow-up.
+	s.hub.Reset(room.ID)
+	streaming, startErr := s.startAssistant(ctx, room)
+	if startErr != nil {
+		s.logger.Error("cannot start continuation message", "error", startErr, "room_id", room.ID.String())
+	}
+	messageID := uuid.Nil
+	if streaming != nil {
+		messageID = streaming.ID
+	}
+	partial := s.newPartialWriter(ctx, messageID)
+
+	outcome, streamErr := s.runTurn(
+		ctx,
+		room,
+		continuationPrompt(int(row.Attempt), procs),
+		func(name string, payload any) { s.publishRoomEvent(room.ID, name, payload) },
+		partial.update,
+		func(runID string) { s.setAssistantRunID(ctx, messageID, runID) },
+	)
 	var saved *store.Message
-	if outcome.rawBody != "" {
-		saved, err = s.persistAssistant(ctx, room, outcome.rawBody, outcome.runID, outcome.meta)
-		if err != nil {
-			s.logger.Error("cannot save continuation reply", "error", err, "room_id", room.ID.String())
+	if messageID != uuid.Nil {
+		if outcome.rawBody == "" {
+			s.discardAssistant(ctx, messageID)
+		} else {
+			state := "done"
+			if streamErr != nil {
+				state = "interrupted"
+			}
+			saved, err = s.finalizeAssistant(ctx, room, messageID, outcome.rawBody, outcome.runID, outcome.meta, state)
+			if err != nil {
+				s.logger.Error("cannot save continuation reply", "error", err, "room_id", room.ID.String())
+			}
 		}
 	}
 	var usageMessageID *uuid.UUID
@@ -286,6 +313,11 @@ func (s *Server) processContinuation(ctx context.Context, row store.Continuation
 		}
 		s.logger.Warn("continuation produced nothing", "reason", reason, "room_id", room.ID.String(), "continuation_id", row.ID.String())
 		s.noteSystem(ctx, room.ID, "lanjut otomatis gagal — Hermes tidak menjawab. Coba tanya lagi.")
+		if streamErr != nil {
+			s.publishRoomEvent(room.ID, "error", map[string]string{"message": "Hermes did not finish this turn. Try again."})
+		}
+		s.hub.Reset(room.ID)
+		s.publishRoomEvent(room.ID, "done", map[string]string{"messageId": ""})
 		finish("skipped", reason)
 		return
 	}
@@ -305,7 +337,7 @@ func (s *Server) processContinuation(ctx context.Context, row store.Continuation
 
 	// The pump has no browser attached by definition; notify unless another
 	// tab happens to be watching this room.
-	if s.hub.count(room.ID) == 0 {
+	if s.hub.Count(room.ID) == 0 {
 		s.notifyPush(ctx, room, saved.Body, saved.ID.String(), false)
 	}
 
@@ -314,6 +346,8 @@ func (s *Server) processContinuation(ctx context.Context, row store.Continuation
 		createdAt: rootCreatedAt,
 		deadline:  row.Deadline,
 	}, true, outcome.meta)
+	s.hub.Reset(room.ID)
+	s.publishRoomEvent(room.ID, "done", map[string]string{"messageId": saved.ID.String()})
 	finish("done", "lanjutan selesai")
 }
 

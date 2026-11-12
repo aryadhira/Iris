@@ -17,6 +17,7 @@ export function messageFromStored(row: StoredMessage): ChatMessage {
     runId: row.run_id ?? undefined,
     meta: row.meta,
     attachments: row.attachments ?? [],
+    state: row.state ?? 'done',
     local: false,
   }
 }
@@ -44,6 +45,7 @@ export function mergeStored(current: ChatMessage[], incoming: StoredMessage[]): 
           runId: row.run_id ?? undefined,
           meta: row.meta,
           attachments: row.attachments ?? [],
+          state: row.state ?? 'done',
           local: false,
           incomplete: false,
         }

@@ -24,7 +24,7 @@ import { ApiError, api } from '../lib/api'
 import { humanizeServerError } from '../lib/errors'
 import { downloadBlob } from '../lib/files'
 import { approvalSeconds, needsStopConfirm, roomState } from '../lib/timeline'
-import type { Approval, ChatMessage, Room, TurnPhase } from '../lib/types'
+import type { Approval, ChatMessage, Room, RoomRun, TurnPhase } from '../lib/types'
 import { createAttachmentStore, type AttachmentStore } from '../stores/attachments'
 import { createRoomStore, type RoomStore } from '../stores/room'
 import { createSpeakerStore, createVoiceStore } from '../stores/voice'
@@ -74,7 +74,24 @@ const messages = computed(() => store.value?.state.messages ?? [])
 const phase = computed<TurnPhase>(() => store.value?.state.phase ?? 'idle')
 const streamingText = computed(() => store.value?.state.streamingText ?? '')
 const currentTool = computed(() => store.value?.state.currentTool ?? '')
-const turnStartedAt = computed(() => store.value?.state.turnStartedAt ?? 0)
+const storeRun = computed<RoomRun | null>(() =>
+  store.value ? store.value.state.run : (room.value?.run ?? null),
+)
+const runStatus = computed(() => storeRun.value?.status ?? '')
+const runStartedAt = computed(() => {
+  const raw = storeRun.value?.started_at ?? ''
+  const parsed = Date.parse(raw)
+  return Number.isFinite(parsed) ? parsed : 0
+})
+const runIsLive = computed(() =>
+  ['queued', 'running', 'waiting_for_approval', 'stopping'].includes(runStatus.value),
+)
+const runInterrupted = computed(() => !runIsLive.value && runStatus.value === 'interrupted')
+const turnStartedAt = computed(
+  () => store.value?.state.turnStartedAt || runStartedAt.value,
+)
+const clockNow = ref(Date.now())
+let clockTimer: number | undefined
 const errorText = computed(() => store.value?.state.errorText ?? '')
 const loadingMessages = computed(() => store.value?.state.loading ?? false)
 const loaded = computed(() => store.value?.state.loaded ?? false)
@@ -82,7 +99,9 @@ const loadError = computed(() => store.value?.state.loadError ?? '')
 const canLoadOlder = computed(() => store.value?.state.canLoadOlder ?? false)
 const loadingOlder = computed(() => store.value?.state.loadingOlder ?? false)
 const archived = computed(() => store.value?.state.archived ?? false)
-const isWorking = computed(() => phase.value === 'streaming' || phase.value === 'reconnecting')
+const isWorking = computed(
+  () => phase.value === 'streaming' || phase.value === 'reconnecting' || runIsLive.value,
+)
 const draft = computed({
   get: () => store.value?.state.draft ?? '',
   set: (value: string) => {
@@ -162,23 +181,28 @@ const timelineItems = computed<TimelineItem[]>(() => {
   })
 })
 const stateChip = computed(() =>
-  roomState(
-    isWorking.value,
-    Boolean(continuation.value),
-    lastAssistant.value?.meta?.statusLine,
-    pendingApprovals.value,
-  ),
+  runInterrupted.value
+    ? 'interrupted'
+    : roomState(
+        isWorking.value,
+        Boolean(continuation.value),
+        lastAssistant.value?.meta?.statusLine,
+        pendingApprovals.value,
+      ),
 )
-const stateChipLabel = computed(
-  () =>
-    ({
-      idle: 'idle',
-      working: 'bekerja',
-      waiting: 'menunggu proses',
-      'needs-you': 'butuh kamu',
-      'needs-approval': `butuh izin · ${pendingApprovals.value}`,
-    })[stateChip.value],
-)
+const stateChipLabel = computed(() => {
+  if (stateChip.value === 'working') {
+    return `bekerja · ${runningClock(turnStartedAt.value, clockNow.value)}`
+  }
+  return {
+    idle: 'idle',
+    working: 'bekerja',
+    waiting: 'menunggu proses',
+    'needs-you': 'butuh kamu',
+    'needs-approval': `butuh izin · ${pendingApprovals.value}`,
+    interrupted: 'terputus',
+  }[stateChip.value]
+})
 const stateChipClass = computed(() => {
   switch (stateChip.value) {
     case 'working':
@@ -189,6 +213,8 @@ const stateChipClass = computed(() => {
       return 'border-violet/60 bg-violet/20 text-ink'
     case 'needs-approval':
       return 'border-orchid/60 bg-orchid/15 text-orchid'
+    case 'interrupted':
+      return 'border-line text-muted'
     default:
       return 'border-line text-quiet'
   }
@@ -252,6 +278,16 @@ function sendTranscript(text: string): void {
     attachments.value?.clearReady()
     showSentToast(body)
   })
+}
+
+function runningClock(startedAt: number, now: number): string {
+  if (!startedAt || startedAt <= 0) return '0:00'
+  const seconds = Math.max(0, Math.floor((now - startedAt) / 1000))
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  const rest = seconds % 60
+  const clock = `${minutes}:${String(rest).padStart(2, '0')}`
+  return hours > 0 ? `${hours}:${clock}` : clock
 }
 
 function showSentToast(text: string): void {
@@ -331,9 +367,10 @@ async function openRoom(id: string): Promise<void> {
       upload: (file, onProgress) => api.uploadFile(found.id, file, onProgress),
       removeRemote: (id) => api.deleteFile(id),
     })
-    const created = createRoomStore(found.id, {}, { archived: Boolean(found.archived_at) })
+    const created = createRoomStore(found.id, {}, { archived: Boolean(found.archived_at), run: found.run ?? null })
     store.value = created
     await created.load()
+    created.startLive()
     loadAutoSpeak(found.id)
     autoSpeakBaseline = new Set(
       created.state.messages
@@ -497,14 +534,14 @@ watch(
     for (const message of messages.value) {
       if (message.role !== 'assistant' || autoSpeakBaseline.has(message.id)) continue
       autoSpeakBaseline.add(message.id)
-      if (message.incomplete) continue
+      if (message.incomplete || (message.state && message.state !== 'done')) continue
       void speaker.toggle(message.id, message.body)
     }
   },
 )
 
 watch(phase, async (value) => {
-  if (value === 'streaming') {
+  if (value === 'streaming' && nearBottom.value) {
     await nextTick()
     scrollToBottom()
   }
@@ -519,6 +556,9 @@ watch(reminderNotice, (value) => {
 })
 
 onMounted(async () => {
+  clockTimer = window.setInterval(() => {
+    clockNow.value = Date.now()
+  }, 1000)
   await nextTick()
   const target = scroller.value?.firstElementChild
   if (target && typeof ResizeObserver !== 'undefined') {
@@ -540,6 +580,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   contentObserver?.disconnect()
   contentObserver = null
+  if (clockTimer !== undefined) window.clearInterval(clockTimer)
   if (continuationTimer !== undefined) window.clearInterval(continuationTimer)
   if (approvalTimer !== undefined) window.clearInterval(approvalTimer)
   if (highlightTimer !== undefined) window.clearTimeout(highlightTimer)

@@ -86,7 +86,7 @@ func (s *Server) retryMessage(c echo.Context) error {
 // turn that started; an attached turn stream covers the first moments before
 // Hermes announced its run id.
 func (s *Server) roomBusy(ctx context.Context, roomID uuid.UUID) bool {
-	if s.hub.count(roomID) > 0 {
+	if s.hub.Count(roomID) > 0 {
 		return true
 	}
 	rows, err := s.store.ListActiveRuns(ctx, roomID)

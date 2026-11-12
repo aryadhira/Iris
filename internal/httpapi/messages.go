@@ -13,7 +13,6 @@ import (
 	"path"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -231,98 +230,104 @@ func (s *Server) streamTurn(
 	// The turn is deliberately detached from the HTTP request: a phone that
 	// walks into a lift must not kill the work (AGENT.md, no lost work).
 	turnCtx := context.WithoutCancel(c.Request().Context())
+	reqCtx := c.Request().Context()
 
 	var gone atomic.Bool
-	finished := make(chan struct{})
-	defer close(finished)
 	// Capture the request context now: the goroutine outlives the handler under
 	// Echo, and reading c.Request() after ServeHTTP reuses the context is a data
 	// race (found by `go test -race`).
-	reqCtx := c.Request().Context()
 	go func() {
-		select {
-		case <-reqCtx.Done():
-			gone.Store(true)
-			s.logger.Info("client left; the turn continues", "room_id", room.ID.String())
-		case <-finished:
-		}
+		<-reqCtx.Done()
+		gone.Store(true)
+		s.logger.Info("client left; the turn continues", "room_id", room.ID.String())
 	}()
 
-	var sendMu sync.Mutex
-	send := func(event string, payload any) {
-		sendMu.Lock()
-		defer sendMu.Unlock()
-		if gone.Load() {
-			return
-		}
-		body, err := json.Marshal(payload)
-		if err != nil {
-			s.logger.Error("cannot encode sse payload", "error", err)
-			return
-		}
-		if _, err := fmt.Fprintf(c.Response(), "event: %s\ndata: %s\n\n", event, body); err != nil {
-			gone.Store(true)
-			s.logger.Info("client left while writing; the turn continues", "room_id", room.ID.String())
-			return
-		}
-		c.Response().Flush()
-	}
-
-	// Approvals are room events, not turn-only frames: another request (the
-	// answer, a sweeper, or a fixture) may publish while this stream is open.
-	events, unsubscribe := s.hub.subscribe(room.ID)
-	hubDone := make(chan struct{})
-	defer func() {
-		close(hubDone)
-		unsubscribe()
-	}()
+	// This response is now just another room subscriber. The same frames go to
+	// every phone/laptop attached to /events, so no browser owns the rendering.
+	s.hub.Reset(room.ID)
+	_, events, unsubscribe := s.hub.Subscribe(room.ID)
+	pumpDone := make(chan struct{})
 	go func() {
-		for {
-			select {
-			case ev, ok := <-events:
-				if !ok {
-					return
-				}
-				send(ev.Name, ev.Payload)
-				if ev.ack != nil {
-					close(ev.ack)
-				}
-			case <-hubDone:
-				return
+		defer close(pumpDone)
+		for ev := range events {
+			if gone.Load() {
+				continue
 			}
+			body, err := json.Marshal(ev.Payload)
+			if err != nil {
+				s.logger.Error("cannot encode sse payload", "error", err)
+				continue
+			}
+			if _, err := fmt.Fprintf(c.Response(), "event: %s\ndata: %s\n\n", ev.Name, body); err != nil {
+				gone.Store(true)
+				s.logger.Info("client left while writing; the turn continues", "room_id", room.ID.String())
+				continue
+			}
+			c.Response().Flush()
 		}
+	}()
+	defer func() {
+		unsubscribe()
+		<-pumpDone
 	}()
 
 	if createdReminder != nil {
-		send("reminder", viewReminder(*createdReminder))
+		s.publishRoomEvent(room.ID, "reminder", viewReminder(*createdReminder))
 	}
 
-	outcome, streamErr := s.runTurn(turnCtx, room, promptText, send)
+	// The assistant row exists before the first token. A reload during the turn
+	// reads this row; a crash leaves it streaming for recovery to mark.
+	streaming, err := s.startAssistant(turnCtx, room)
+	if err != nil {
+		s.logger.Error("cannot start streaming message", "error", err, "room_id", room.ID.String())
+	}
+	messageID := uuid.Nil
+	if streaming != nil {
+		messageID = streaming.ID
+	}
+	partial := s.newPartialWriter(turnCtx, messageID)
+
+	outcome, streamErr := s.runTurn(
+		turnCtx,
+		room,
+		promptText,
+		func(name string, payload any) { s.publishRoomEvent(room.ID, name, payload) },
+		partial.update,
+		func(runID string) { s.setAssistantRunID(turnCtx, messageID, runID) },
+	)
 	rawBody := outcome.rawBody
 
 	var saved *store.Message
-	if rawBody != "" {
-		row, err := s.persistAssistant(turnCtx, room, rawBody, outcome.runID, outcome.meta)
-		if err != nil {
-			s.logger.Error("cannot save assistant message", "error", err, "room_id", room.ID.String())
+	state := "done"
+	if streamErr != nil {
+		state = "interrupted"
+	}
+	if messageID != uuid.Nil {
+		if rawBody == "" {
+			s.discardAssistant(turnCtx, messageID)
 		} else {
-			saved = row
+			row, err := s.finalizeAssistant(turnCtx, room, messageID, rawBody, outcome.runID, outcome.meta, state)
+			if err != nil {
+				s.logger.Error("cannot save assistant message", "error", err, "room_id", room.ID.String())
+			} else {
+				saved = row
+			}
 		}
 	}
 
 	// Meter the turn whether or not it produced visible text: a stopped run
 	// still spent tokens, and a terminal payload without usage must leave a
 	// visible "not reported" row.
-	var messageID *uuid.UUID
+	var messageIDPtr *uuid.UUID
 	if saved != nil {
-		messageID = &saved.ID
+		messageIDPtr = &saved.ID
 	}
-	s.recordUsage(turnCtx, room, outcome, messageID)
+	s.recordUsage(turnCtx, room, outcome, messageIDPtr)
 
 	// Nobody watching? A finished turn gets one push. A phone that is still
 	// attached to this room already sees the reply and stays quiet.
 	if streamErr == nil && saved != nil && !outcome.stopped {
-		watchers := s.hub.count(room.ID)
+		watchers := s.hub.Count(room.ID)
 		if gone.Load() && watchers > 0 {
 			watchers--
 		}
@@ -350,17 +355,21 @@ func (s *Server) streamTurn(
 		if errors.Is(streamErr, hermes.ErrIdle) {
 			message = "Hermes went quiet, so the turn stopped. Anything it wrote is kept below."
 		}
-		send("error", map[string]string{"message": message})
+		s.publishRoomEvent(room.ID, "error", map[string]string{"message": message})
+		s.hub.Reset(room.ID)
 		if saved != nil {
-			send("done", map[string]string{"messageId": saved.ID.String()})
+			s.publishRoomEvent(room.ID, "done", map[string]string{"messageId": saved.ID.String()})
+		} else {
+			s.publishRoomEvent(room.ID, "done", map[string]string{"messageId": ""})
 		}
 		return nil
 	}
 
+	s.hub.Reset(room.ID)
 	if saved != nil {
-		send("done", map[string]string{"messageId": saved.ID.String()})
+		s.publishRoomEvent(room.ID, "done", map[string]string{"messageId": saved.ID.String()})
 	} else {
-		send("done", map[string]string{"messageId": ""})
+		s.publishRoomEvent(room.ID, "done", map[string]string{"messageId": ""})
 	}
 	return nil
 }

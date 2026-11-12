@@ -1,8 +1,25 @@
+export interface RoomRun {
+  id: string
+  status:
+    | 'queued'
+    | 'running'
+    | 'waiting_for_approval'
+    | 'stopping'
+    | 'completed'
+    | 'failed'
+    | 'cancelled'
+    | 'interrupted'
+  started_at: string
+  continuation: number
+  chain?: string
+}
+
 export interface Room {
   id: string
   name: string
   topic: string
   pending_approvals?: number
+  run?: RoomRun | null
   created_at: string
   archived_at?: string | null
 }
@@ -89,6 +106,7 @@ export interface StoredMessage {
   room_id: string
   role: string
   body: string
+  state?: 'streaming' | 'done' | 'interrupted'
   run_id?: string | null
   meta?: MessageMeta
   attachments?: FileAttachment[]
@@ -109,6 +127,8 @@ export interface ChatMessage {
   local?: boolean
   /** True when the connection died before the reply was confirmed complete. */
   incomplete?: boolean
+  /** Server truth for a row: a partial answer, a final one, or a cut-off one. */
+  state?: 'streaming' | 'done' | 'interrupted'
 }
 
 export type TurnPhase = 'idle' | 'streaming' | 'reconnecting' | 'error'

@@ -38,4 +38,4 @@ WITH claimed AS (
 INSERT INTO messages (id, room_id, role, body, meta)
 SELECT sqlc.arg('message_id'), claimed.room_id, 'system', sqlc.arg('body'), '{}'::jsonb
 FROM claimed
-RETURNING id, room_id, role, body, run_id, created_at, meta, search_vector;
+RETURNING *;
