@@ -71,6 +71,58 @@ func TestStreamChatParsesNamedEventsAndUnknownKinds(t *testing.T) {
 	}
 }
 
+func TestNormalizeReadsTerminalUsageAndServedRuntime(t *testing.T) {
+	// Captured from the live gateway on 2026-11-12 (build v0.21.6+636): the
+	// session stream reports three counters and nests runtime inside usage.
+	captured := []byte(`{"session_id":"api_1794472917_53c0e61d","message_id":"msg_1","completed":true,"partial":false,"interrupted":false,"messages":[{"role":"assistant","content":"Halo, Boss."}],"usage":{"input_tokens":16619,"output_tokens":6,"total_tokens":16625,"runtime":{"provider":"opencode-go","model":"deepseek-v4.1-flash","route_source":"global","requested":{"provider":"","model":""}}},"runtime":{"provider":"opencode-go","model":"deepseek-v4.1-flash","route_source":"global"},"run_id":"run_1","seq":8}`)
+	ev := normalize("run.completed", captured, testLogger())
+	if ev.Kind != "done" {
+		t.Fatalf("kind = %q", ev.Kind)
+	}
+	if ev.Usage == nil {
+		t.Fatal("usage was not parsed")
+	}
+	if ev.Usage.InputTokens != 16619 || ev.Usage.OutputTokens != 6 || ev.Usage.TotalTokens != 16625 {
+		t.Fatalf("usage = %+v", *ev.Usage)
+	}
+	if ev.Usage.CacheReported {
+		t.Fatal("cache_reported = true although this payload names no cache counter")
+	}
+	if ev.Runtime.Provider != "opencode-go" || ev.Runtime.Model != "deepseek-v4.1-flash" {
+		t.Fatalf("runtime = %+v", ev.Runtime)
+	}
+
+	// A five-counter payload (the /v1/runs shape) is read in full.
+	five := []byte(`{"usage":{"input_tokens":10,"output_tokens":2,"total_tokens":18,"cache_read_tokens":5,"cache_write_tokens":1},"runtime":{"provider":"deepseek","model":"deepseek-v4-flash"}}`)
+	ev = normalize("run.completed", five, testLogger())
+	if ev.Usage == nil || ev.Usage.CacheReadTokens != 5 || ev.Usage.CacheWriteTokens != 1 {
+		t.Fatalf("five-counter usage = %+v", ev.Usage)
+	}
+	if !ev.Usage.CacheReported {
+		t.Fatal("cache_reported = false for a payload that names both cache counters")
+	}
+
+	// No usage object at all is "not reported", not zero.
+	absent := normalize("run.completed", []byte(`{"run_id":"run_2","runtime":{"provider":"x","model":"y"}}`), testLogger())
+	if absent.Usage != nil {
+		t.Fatalf("usage = %+v, want nil for an absent payload", absent.Usage)
+	}
+
+	// The bare done sentinel must not invent usage.
+	sentinel := normalize("done", []byte(`{"run_id":"run_2"}`), testLogger())
+	if sentinel.Usage != nil {
+		t.Fatalf("sentinel usage = %+v, want nil", sentinel.Usage)
+	}
+}
+
+func TestNormalizeKeepsNestedRuntimeWhenTopLevelIsEmpty(t *testing.T) {
+	raw := []byte(`{"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2,"runtime":{"provider":"p","model":"m"}}}`)
+	ev := normalize("run.completed", raw, testLogger())
+	if ev.Runtime.Provider != "p" || ev.Runtime.Model != "m" {
+		t.Fatalf("nested runtime = %+v", ev.Runtime)
+	}
+}
+
 func TestStreamChatIdleWatchdogFailsHonestly(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

@@ -78,6 +78,32 @@ func (c *Client) Transcribe(ctx context.Context, audio io.Reader, contentType st
 	return out, nil
 }
 
+// SpeakStream asks for the streaming protocol. The caller owns the body; each
+// newline is one JSON object (see voice/README.md).
+func (c *Client) SpeakStream(ctx context.Context, text string) (io.ReadCloser, error) {
+	payload, err := json.Marshal(map[string]string{"text": text})
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/speak/stream", bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/x-ndjson")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("voice sidecar unreachable: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return nil, fmt.Errorf("voice sidecar answered %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return resp.Body, nil
+}
+
 // Speak asks for speech and returns the audio stream plus the exact sentence
 // the engine was given.
 func (c *Client) Speak(ctx context.Context, text string) (*Speech, error) {

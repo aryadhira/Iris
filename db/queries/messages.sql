@@ -22,6 +22,23 @@ ORDER BY created_at ASC, id ASC;
 SELECT * FROM messages
 WHERE id = $1;
 
+-- name: ListMessagesAfter :many
+-- Retry walks the transcript from one user message forward, in real order, to
+-- find the reply it supersedes. The id is the tiebreaker when two rows share a
+-- timestamp (a fast fake clock, or two inserts in the same millisecond).
+SELECT * FROM messages
+WHERE room_id = $1
+  AND (created_at > $2 OR (created_at = $2 AND id > $3::uuid))
+ORDER BY created_at ASC, id ASC;
+
+-- name: MarkMessageSuperseded :one
+-- The old reply is dimmed and labelled, never deleted: hiding a failure would
+-- lie about what happened.
+UPDATE messages
+SET meta = jsonb_set(COALESCE(meta, '{}'::jsonb), '{superseded}', 'true'::jsonb)
+WHERE id = $1
+RETURNING *;
+
 -- name: GetLatestAssistantMessage :one
 SELECT * FROM messages
 WHERE room_id = $1

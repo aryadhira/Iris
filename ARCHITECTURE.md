@@ -90,12 +90,53 @@ markdown stripped, code/tables dropped, secrets redacted, numbers spoken, max tw
 on screen. edge-tts, `-8%`, Indonesian female.
 
 Local engines cannot be called from the browser, so a loopback sidecar (`voice/`, `127.0.0.1:3310`) owns
-`faster-whisper` and edge-tts. `irisd` proxies `POST /api/voice/transcribe` (multipart audio) and
-`POST /api/voice/speak` behind the owner cookie; the sidecar is never exposed. A cold first turn reads as a
+`faster-whisper` and edge-tts. `irisd` proxies `POST /api/voice/transcribe` (multipart audio),
+`POST /api/voice/speak` (buffered) and `POST /api/voice/speak/stream` behind the owner cookie; the
+sidecar is never exposed. A cold first turn reads as a
 hang, so the model and one throwaway synthesis are warmed at boot. The microphone needs a secure context:
 `localhost` is one, a LAN IP over plain http is not — the phone must use the Tailscale HTTPS hostname.
 
-See `voice/README.md` for endpoints, environment variables, and how to run it with `irisd`.
+See `voice/README.md` for endpoints, the NDJSON protocol, environment variables, and how to run it with `irisd`.
+
+The summary is also streamed: the sidecar splits it into sentences, synthesises sentence 1, and writes it
+immediately as newline-delimited JSON; sentence 2 follows. `irisd` flushes each line, so the first sound
+starts while the rest is still being made. Playback is a serial queue in the browser; barge-in aborts the
+whole queue, and one failed chunk is skipped rather than silencing the rest. `POST /speak` still buffers
+the whole summary and remains the fallback.
+
+## Cost meter and the budget guard
+
+Every terminal Hermes payload carries `usage` (input, output, total, cache read, cache write) and
+`runtime` (`provider`, `model` that actually served the turn). irisd writes exactly one `usage` row per
+assistant turn, linked to the message. The live session stream on this build reports only the first three
+counters and nests `runtime` inside `usage`; the parser reads both shapes, records the missing cache
+counters as 0, and sets `cache_reported=false` so the cost is labelled an upper bound rather than an
+invoice. A payload with **no** usage object is stored with zeros and `usage_reported=false`; a zero that
+means "not reported" never renders as "free".
+
+Prices are not in irisd. `scripts/seed-prices.py` runs with the Hermes interpreter and its workspace on
+`PYTHONPATH`, reads the official snapshot in `agent/usage_pricing.py`, and writes
+`~/.config/iris/prices.json` (mode 0600). Boss edits that file. A model with no entry gets
+`cost_usd = NULL` and the UI shows tokens with "harga model ini belum ada". A null rate with reported
+tokens is also unknown, not zero.
+
+`GET /api/usage?room=&from=&to=` returns totals, a per-Jakarta-day series and a global per-room
+breakdown. The room inspector shows today's chip, a 14-day bar chart and the most expensive rooms.
+
+`IRIS_DAILY_BUDGET_USD` (empty = off) is checked **once**, before a new user message is written. At or
+above the limit the message is refused with HTTP 429 and a visible Indonesian system line naming spend
+and budget; no user row and no run are created. Sending `lanjut` writes one `budget_overrides` row and
+lets exactly that turn through. The next message is guarded again. The check never touches a turn that is
+already running.
+
+## Retry
+
+`POST /api/rooms/{id}/messages/{mid}/retry` reuses the existing **user** row: no second user message is
+created, so this is a retry rather than a resend. The assistant reply between that message and the next
+user message is marked `meta.superseded=true` and stays in the transcript, dimmed with a "digantikan"
+label. A busy room answers 409 with Indonesian copy instead of starting a second turn. The UI offers
+"Coba lagi" on a failed/empty reply and in every user message's menu; it is a 44 px target and disabled
+while the room works.
 
 ## Reminders
 

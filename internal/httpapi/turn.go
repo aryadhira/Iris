@@ -26,6 +26,8 @@ type turnOutcome struct {
 	runID   string
 	meta    continuation.Meta
 	stopped bool
+	usage   *hermes.Usage
+	runtime hermes.Runtime
 }
 
 type toolTrace struct {
@@ -115,6 +117,8 @@ func (s *Server) runTurn(
 		runID         string
 		stopped       bool
 		completedSeen bool
+		usage         *hermes.Usage
+		runtime       hermes.Runtime
 	)
 	trace := newToolTrace()
 	currentTool := ""
@@ -161,6 +165,15 @@ func (s *Server) runTurn(
 		case "done":
 			if ev.Text != "" {
 				finalText = ev.Text
+			}
+			// The terminal payload is the meter. Keep the last non-nil usage:
+			// the bare `done` sentinel that follows run.completed has none and
+			// must not erase what the real terminal event reported.
+			if ev.Usage != nil {
+				usage = ev.Usage
+			}
+			if ev.Runtime.Provider != "" || ev.Runtime.Model != "" {
+				runtime = ev.Runtime
 			}
 			// The bare ``done`` sentinel closes the stream after run.cancelled;
 			// it must not overwrite a stop decision with "completed".
@@ -215,6 +228,8 @@ func (s *Server) runTurn(
 		rawBody: rawBody,
 		runID:   runID,
 		stopped: stopped,
+		usage:   usage,
+		runtime: runtime,
 		meta: continuation.Meta{
 			Procs:      trace.procs,
 			Tools:      trace.tools,

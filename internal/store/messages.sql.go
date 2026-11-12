@@ -176,6 +176,76 @@ func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]M
 	return items, nil
 }
 
+const listMessagesAfter = `-- name: ListMessagesAfter :many
+SELECT id, room_id, role, body, run_id, created_at, meta, search_vector FROM messages
+WHERE room_id = $1
+  AND (created_at > $2 OR (created_at = $2 AND id > $3::uuid))
+ORDER BY created_at ASC, id ASC
+`
+
+type ListMessagesAfterParams struct {
+	RoomID    uuid.UUID
+	CreatedAt time.Time
+	Column3   uuid.UUID
+}
+
+// Retry walks the transcript from one user message forward, in real order, to
+// find the reply it supersedes. The id is the tiebreaker when two rows share a
+// timestamp (a fast fake clock, or two inserts in the same millisecond).
+func (q *Queries) ListMessagesAfter(ctx context.Context, arg ListMessagesAfterParams) ([]Message, error) {
+	rows, err := q.db.Query(ctx, listMessagesAfter, arg.RoomID, arg.CreatedAt, arg.Column3)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Message{}
+	for rows.Next() {
+		var i Message
+		if err := rows.Scan(
+			&i.ID,
+			&i.RoomID,
+			&i.Role,
+			&i.Body,
+			&i.RunID,
+			&i.CreatedAt,
+			&i.Meta,
+			&i.SearchVector,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markMessageSuperseded = `-- name: MarkMessageSuperseded :one
+UPDATE messages
+SET meta = jsonb_set(COALESCE(meta, '{}'::jsonb), '{superseded}', 'true'::jsonb)
+WHERE id = $1
+RETURNING id, room_id, role, body, run_id, created_at, meta, search_vector
+`
+
+// The old reply is dimmed and labelled, never deleted: hiding a failure would
+// lie about what happened.
+func (q *Queries) MarkMessageSuperseded(ctx context.Context, id uuid.UUID) (Message, error) {
+	row := q.db.QueryRow(ctx, markMessageSuperseded, id)
+	var i Message
+	err := row.Scan(
+		&i.ID,
+		&i.RoomID,
+		&i.Role,
+		&i.Body,
+		&i.RunID,
+		&i.CreatedAt,
+		&i.Meta,
+		&i.SearchVector,
+	)
+	return i, err
+}
+
 const searchMessages = `-- name: SearchMessages :many
 SELECT
     m.id,

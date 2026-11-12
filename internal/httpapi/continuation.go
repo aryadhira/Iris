@@ -273,6 +273,11 @@ func (s *Server) processContinuation(ctx context.Context, row store.Continuation
 			s.logger.Error("cannot save continuation reply", "error", err, "room_id", room.ID.String())
 		}
 	}
+	var usageMessageID *uuid.UUID
+	if saved != nil {
+		usageMessageID = &saved.ID
+	}
+	s.recordUsage(ctx, room, outcome, usageMessageID)
 
 	if saved == nil {
 		reason := "lanjut tidak menghasilkan balasan"

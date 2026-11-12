@@ -38,6 +38,8 @@ type fakeStore struct {
 	runs          map[string]store.Run
 	reminders     []store.Reminder
 	pushSubs      []store.PushSubscription
+	usageRows     []store.Usage
+	overrides     []store.BudgetOverride
 
 	createRoomCalls int
 	lastRoomArg     store.CreateRoomParams
@@ -279,6 +281,54 @@ func (f *fakeStore) GetMessage(_ context.Context, id uuid.UUID) (store.Message, 
 		if row.ID == id {
 			return row, nil
 		}
+	}
+	return store.Message{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) ListMessagesAfter(_ context.Context, arg store.ListMessagesAfterParams) ([]store.Message, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]store.Message, 0)
+	for _, row := range f.messages {
+		if row.RoomID != arg.RoomID {
+			continue
+		}
+		if row.CreatedAt.After(arg.CreatedAt) ||
+			(row.CreatedAt.Equal(arg.CreatedAt) && strings.Compare(row.ID.String(), arg.Column3.String()) > 0) {
+			out = append(out, row)
+		}
+	}
+	sortMessages(out)
+	return out, nil
+}
+
+func sortMessages(rows []store.Message) {
+	for i := 1; i < len(rows); i++ {
+		for j := i; j > 0; j-- {
+			left, right := rows[j], rows[j-1]
+			if left.CreatedAt.After(right.CreatedAt) ||
+				(left.CreatedAt.Equal(right.CreatedAt) && left.ID.String() > right.ID.String()) {
+				rows[j], rows[j-1] = right, left
+				continue
+			}
+			break
+		}
+	}
+}
+
+func (f *fakeStore) MarkMessageSuperseded(_ context.Context, id uuid.UUID) (store.Message, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.messages {
+		if f.messages[i].ID != id {
+			continue
+		}
+		meta := map[string]any{}
+		_ = json.Unmarshal(f.messages[i].Meta, &meta)
+		meta["superseded"] = true
+		raw, _ := json.Marshal(meta)
+		f.messages[i].Meta = raw
+		return f.messages[i], nil
 	}
 	return store.Message{}, pgx.ErrNoRows
 }
@@ -771,6 +821,179 @@ func (f *fakeStore) DeletePushSubscription(_ context.Context, endpoint string) (
 	}
 	f.pushSubs = kept
 	return removed, nil
+}
+
+func (f *fakeStore) InsertUsage(_ context.Context, arg store.InsertUsageParams) (store.Usage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	row := store.Usage{
+		ID:               arg.ID,
+		RunID:            arg.RunID,
+		RoomID:           arg.RoomID,
+		MessageID:        arg.MessageID,
+		Provider:         arg.Provider,
+		Model:            arg.Model,
+		InputTokens:      arg.InputTokens,
+		OutputTokens:     arg.OutputTokens,
+		TotalTokens:      arg.TotalTokens,
+		CacheReadTokens:  arg.CacheReadTokens,
+		CacheWriteTokens: arg.CacheWriteTokens,
+		CostUsd:          arg.CostUsd,
+		UsageReported:    arg.UsageReported,
+		CacheReported:    arg.CacheReported,
+		CreatedAt:        arg.CreatedAt,
+	}
+	for i := range f.usageRows {
+		if f.usageRows[i].RunID == arg.RunID {
+			f.usageRows[i] = row
+			return row, nil
+		}
+	}
+	f.usageRows = append(f.usageRows, row)
+	return row, nil
+}
+
+func (f *fakeStore) usageInWindow(roomID *uuid.UUID, from, to time.Time) []store.Usage {
+	out := make([]store.Usage, 0)
+	for _, row := range f.usageRows {
+		if roomID != nil && row.RoomID != *roomID {
+			continue
+		}
+		if row.CreatedAt.Before(from) || !row.CreatedAt.Before(to) {
+			continue
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+func (f *fakeStore) UsageTotals(_ context.Context, arg store.UsageTotalsParams) (store.UsageTotalsRow, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out store.UsageTotalsRow
+	for _, row := range f.usageInWindow(arg.RoomID, arg.FromAt, arg.ToAt) {
+		out.Turns++
+		out.InputTokens += row.InputTokens
+		out.OutputTokens += row.OutputTokens
+		out.TotalTokens += row.TotalTokens
+		out.CacheReadTokens += row.CacheReadTokens
+		out.CacheWriteTokens += row.CacheWriteTokens
+		if row.CostUsd == nil {
+			out.UnknownCostTurns++
+		} else {
+			out.CostUsd += *row.CostUsd
+		}
+		if !row.UsageReported {
+			out.UnreportedTurns++
+		}
+		if !row.CacheReported {
+			out.UnreportedCacheTurns++
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) UsageDaily(_ context.Context, arg store.UsageDailyParams) ([]store.UsageDailyRow, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	byDay := map[string]*store.UsageDailyRow{}
+	for _, row := range f.usageInWindow(arg.RoomID, arg.FromAt, arg.ToAt) {
+		day := jakartaDay(row.CreatedAt).Format("2006-01-02")
+		bucket := byDay[day]
+		if bucket == nil {
+			bucket = &store.UsageDailyRow{Day: day}
+			byDay[day] = bucket
+		}
+		bucket.Turns++
+		bucket.Tokens += row.InputTokens + row.OutputTokens
+		if row.CostUsd == nil {
+			bucket.UnknownCostTurns++
+		} else {
+			bucket.CostUsd += *row.CostUsd
+		}
+	}
+	days := make([]string, 0, len(byDay))
+	for day := range byDay {
+		days = append(days, day)
+	}
+	sortStrings(days)
+	out := make([]store.UsageDailyRow, 0, len(days))
+	for _, day := range days {
+		out = append(out, *byDay[day])
+	}
+	return out, nil
+}
+
+func (f *fakeStore) UsageByRoom(_ context.Context, arg store.UsageByRoomParams) ([]store.UsageByRoomRow, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	byRoom := map[uuid.UUID]*store.UsageByRoomRow{}
+	for _, row := range f.usageInWindow(nil, arg.FromAt, arg.ToAt) {
+		bucket := byRoom[row.RoomID]
+		if bucket == nil {
+			bucket = &store.UsageByRoomRow{RoomID: row.RoomID}
+			if room, ok := f.rooms[row.RoomID]; ok {
+				bucket.RoomName = room.Name
+			}
+			byRoom[row.RoomID] = bucket
+		}
+		bucket.Turns++
+		bucket.Tokens += row.InputTokens + row.OutputTokens
+		if row.CostUsd == nil {
+			bucket.UnknownCostTurns++
+		} else {
+			bucket.CostUsd += *row.CostUsd
+		}
+	}
+	out := make([]store.UsageByRoomRow, 0, len(byRoom))
+	for _, bucket := range byRoom {
+		out = append(out, *bucket)
+	}
+	for i := 1; i < len(out); i++ {
+		for j := i; j > 0 && out[j].CostUsd > out[j-1].CostUsd; j-- {
+			out[j], out[j-1] = out[j-1], out[j]
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) UsageSpendBetween(_ context.Context, arg store.UsageSpendBetweenParams) (store.UsageSpendBetweenRow, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out store.UsageSpendBetweenRow
+	for _, row := range f.usageInWindow(nil, arg.FromAt, arg.ToAt) {
+		out.Turns++
+		if row.CostUsd == nil {
+			out.UnknownCostTurns++
+		} else {
+			out.CostUsd += *row.CostUsd
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) InsertBudgetOverride(_ context.Context, arg store.InsertBudgetOverrideParams) (store.BudgetOverride, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	row := store.BudgetOverride{
+		ID:        arg.ID,
+		RoomID:    arg.RoomID,
+		Day:       arg.Day,
+		SpentUsd:  arg.SpentUsd,
+		BudgetUsd: arg.BudgetUsd,
+		MessageID: arg.MessageID,
+		CreatedAt: arg.CreatedAt,
+	}
+	f.overrides = append(f.overrides, row)
+	return row, nil
+}
+
+func sortStrings(values []string) {
+	for i := 1; i < len(values); i++ {
+		for j := i; j > 0 && values[j] < values[j-1]; j-- {
+			values[j], values[j-1] = values[j-1], values[j]
+		}
+	}
 }
 
 func (f *fakeStore) approvalsFor(roomID uuid.UUID) []store.Approval {

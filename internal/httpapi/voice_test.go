@@ -21,8 +21,9 @@ import (
 )
 
 type fakeVoice struct {
-	transcribe func(ctx context.Context, audio io.Reader, contentType string) (irisvoice.Transcription, error)
-	speak      func(ctx context.Context, text string) (*irisvoice.Speech, error)
+	transcribe  func(ctx context.Context, audio io.Reader, contentType string) (irisvoice.Transcription, error)
+	speak       func(ctx context.Context, text string) (*irisvoice.Speech, error)
+	speakStream func(ctx context.Context, text string) (io.ReadCloser, error)
 
 	transcribeCalls int
 	speakText       string
@@ -42,6 +43,13 @@ func (f *fakeVoice) Speak(ctx context.Context, text string) (*irisvoice.Speech, 
 		return f.speak(ctx, text)
 	}
 	return &irisvoice.Speech{Audio: io.NopCloser(strings.NewReader(""))}, nil
+}
+
+func (f *fakeVoice) SpeakStream(ctx context.Context, text string) (io.ReadCloser, error) {
+	if f.speakStream != nil {
+		return f.speakStream(ctx, text)
+	}
+	return io.NopCloser(strings.NewReader("")), nil
 }
 
 func newVoiceTestApp(t *testing.T, v VoiceClient) *echo.Echo {

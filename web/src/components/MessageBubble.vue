@@ -6,7 +6,7 @@ function humanSize(bytes?: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 import { computed, ref } from 'vue'
-import { PhDownloadSimple } from '@phosphor-icons/vue'
+import { PhDotsThreeVertical, PhDownloadSimple } from '@phosphor-icons/vue'
 import ArtifactCard from './ArtifactCard.vue'
 import BrandMark from './BrandMark.vue'
 import FileIcon from './FileIcon.vue'
@@ -23,13 +23,17 @@ const props = withDefaults(
     streaming?: boolean
     speaking?: boolean
     loadingSpeech?: boolean
+    canRetry?: boolean
+    retryDisabled?: boolean
   }>(),
-  { streaming: false, speaking: false, loadingSpeech: false },
+  { streaming: false, speaking: false, loadingSpeech: false, canRetry: true, retryDisabled: false },
 )
 
-const emit = defineEmits<{ speak: [] }>()
+const emit = defineEmits<{ speak: []; retry: [] }>()
 
+const menuOpen = ref(false)
 const preview = ref<FileAttachment | null>(null)
+const superseded = computed(() => props.message.meta?.superseded === true)
 const attachments = computed(() => props.message.attachments ?? [])
 const images = computed(() => attachments.value.filter((file) => isImage(file)))
 const files = computed(() => attachments.value.filter((file) => !isImage(file)))
@@ -43,7 +47,38 @@ const time = computed(() => {
 </script>
 
 <template>
-  <article v-if="message.role === 'user'" class="flex justify-end" data-testid="user-message">
+  <article v-if="message.role === 'user'" class="flex items-start justify-end gap-1" data-testid="user-message">
+    <div class="relative mt-1 shrink-0">
+      <button
+        type="button"
+        class="tap flex h-11 w-11 items-center justify-center rounded-lg text-quiet hover:text-ink"
+        aria-label="Menu pesan ini"
+        aria-haspopup="menu"
+        :aria-expanded="menuOpen"
+        data-testid="message-menu"
+        @click="menuOpen = !menuOpen"
+      >
+        <PhDotsThreeVertical :size="16" />
+      </button>
+      <div v-if="menuOpen" class="fixed inset-0 z-20" @click="menuOpen = false" />
+      <div
+        v-if="menuOpen"
+        class="absolute right-0 top-full z-30 mt-0.5 w-40 rounded-xl border border-line bg-bg-deep p-1 shadow-2xl"
+        role="menu"
+      >
+        <button
+          v-if="canRetry"
+          type="button"
+          class="tap flex h-11 w-full items-center rounded-lg px-3 text-left text-[13px] text-ink hover:bg-surface disabled:opacity-50"
+          role="menuitem"
+          :disabled="retryDisabled"
+          data-testid="retry-message"
+          @click="menuOpen = false; emit('retry')"
+        >
+          Coba lagi
+        </button>
+      </div>
+    </div>
     <div class="min-w-0 max-w-[min(85%,34rem)]">
       <div class="overflow-hidden rounded-2xl rounded-br-md border border-line bg-surface">
         <div
@@ -112,8 +147,10 @@ const time = computed(() => {
 
   <article
     v-else-if="message.role === 'assistant'"
-    class="flex gap-3"
+    class="flex gap-3 transition-opacity"
+    :class="superseded ? 'opacity-55' : ''"
     :data-testid="streaming ? 'streaming-message' : 'assistant-message'"
+    :data-superseded="superseded ? 'true' : 'false'"
   >
     <BrandMark :size="26" class="mt-0.5" />
     <div class="min-w-0 flex-1">
@@ -131,6 +168,13 @@ const time = computed(() => {
           membaca…
         </span>
         <span v-else-if="loadingSpeech" class="text-[11px] text-quiet">menyiapkan suara…</span>
+        <span
+          v-if="superseded"
+          class="rounded-full border border-line px-1.5 py-0.5 text-[10px] leading-tight text-quiet"
+          data-testid="superseded-label"
+        >
+          digantikan
+        </span>
       </div>
       <div class="text-[14px] leading-relaxed text-ink">
         <FormattedText :text="message.body" />

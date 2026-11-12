@@ -1,0 +1,100 @@
+[
+  {
+    "scope": "390",
+    "name": "usage chip shows today and a turn count",
+    "pass": true,
+    "detail": "hari ini $0.0025 · 1 turn",
+    "at": "2026-11-12T09:16:09.712Z"
+  },
+  {
+    "scope": "390",
+    "name": "usage chart has 14 day columns",
+    "pass": true,
+    "detail": "14",
+    "at": "2026-11-12T09:16:09.712Z"
+  },
+  {
+    "scope": "390",
+    "name": "usage total is rendered",
+    "pass": true,
+    "detail": "$0.0025 · 1 turn",
+    "at": "2026-11-12T09:16:09.712Z"
+  },
+  {
+    "scope": "390",
+    "name": "top rooms are listed",
+    "pass": true,
+    "detail": "1",
+    "at": "2026-11-12T09:16:09.713Z"
+  },
+  {
+    "scope": "390",
+    "name": "usage panel fits the phone width",
+    "pass": true,
+    "detail": "366/390",
+    "at": "2026-11-12T09:16:09.713Z"
+  },
+  {
+    "scope": "390",
+    "name": "retry label is \"Coba lagi\"",
+    "pass": true,
+    "detail": "Coba lagi",
+    "at": "2026-11-12T09:16:10.252Z"
+  },
+  {
+    "scope": "390",
+    "name": "retry target is at least 44px tall",
+    "pass": true,
+    "detail": "{\"label\":\"Coba lagi\",\"disabled\":false,\"height\":44,\"width\":150,\"trigger\":{\"width\":44,\"height\":44}}",
+    "at": "2026-11-12T09:16:10.252Z"
+  },
+  {
+    "scope": "390",
+    "name": "retry trigger is 44x44",
+    "pass": true,
+    "detail": "{\"width\":44,\"height\":44}",
+    "at": "2026-11-12T09:16:10.252Z"
+  },
+  {
+    "scope": "390",
+    "name": "retry is enabled while idle",
+    "pass": true,
+    "detail": "{\"label\":\"Coba lagi\",\"disabled\":false,\"height\":44,\"width\":150,\"trigger\":{\"width\":44,\"height\":44}}",
+    "at": "2026-11-12T09:16:10.252Z"
+  },
+  {
+    "scope": "390",
+    "name": "retry is disabled while the room is working",
+    "pass": true,
+    "detail": "",
+    "at": "2026-11-12T09:16:10.262Z"
+  },
+  {
+    "scope": "390",
+    "name": "retry added a reply without adding a user message",
+    "pass": true,
+    "detail": "{\"count\":2,\"superseded\":\"true\",\"opacity\":\"0.55\",\"label\":\"digantikan\",\"users\":1}",
+    "at": "2026-11-12T09:16:13.803Z"
+  },
+  {
+    "scope": "390",
+    "name": "old reply is dimmed and labelled",
+    "pass": true,
+    "detail": "{\"count\":2,\"superseded\":\"true\",\"opacity\":\"0.55\",\"label\":\"digantikan\",\"users\":1}",
+    "at": "2026-11-12T09:16:13.803Z"
+  },
+  {
+    "scope": "390",
+    "name": "the \"membaca…\" state appears on the first chunk",
+    "pass": true,
+    "detail": "{\"text\":\"membaca…\",\"appearedAt\":42849.39999997616,\"finishedAtAppearance\":false,\"finishedNow\":true,\"started\":40206.59999996424}",
+    "at": "2026-11-12T09:16:16.962Z"
+  },
+  {
+    "scope": "390",
+    "name": "speech starts before the response finishes",
+    "pass": true,
+    "detail": "{\"text\":\"membaca…\",\"appearedAt\":42849.39999997616,\"finishedAtAppearance\":false,\"finishedNow\":true,\"started\":40206.59999996424}",
+    "at": "2026-11-12T09:16:16.962Z"
+  }
+]

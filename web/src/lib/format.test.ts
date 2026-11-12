@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { elapsedLabel, humanToolName } from './format'
+import { elapsedLabel, formatUSD, humanToolName } from './format'
 
 describe('humanToolName', () => {
   it('strips the internal underscore before naming the tool', () => {
@@ -28,5 +28,13 @@ describe('elapsedLabel', () => {
 
   it('never goes negative when clocks disagree', () => {
     expect(elapsedLabel(start, start - 5_000)).toBe('0 detik')
+  })
+})
+
+describe('formatUSD', () => {
+  it('keeps a sub-cent turn visible instead of rendering $0.00', () => {
+    expect(formatUSD(0.0025)).toBe('$0.0025')
+    expect(formatUSD(0)).toBe('$0.00')
+    expect(formatUSD(0.42)).toBe('$0.42')
   })
 })

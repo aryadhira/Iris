@@ -182,23 +182,25 @@ func normalize(name string, raw []byte, logger *slog.Logger) Event {
 	}
 
 	var p struct {
-		SessionID   string   `json:"session_id"`
-		RunID       string   `json:"run_id"`
-		MessageID   string   `json:"message_id"`
-		Delta       string   `json:"delta"`
-		Content     string   `json:"content"`
-		ToolName    string   `json:"tool_name"`
-		Name        string   `json:"name"`
-		Tool        string   `json:"tool"`
-		Status      string   `json:"status"`
-		RequestID   string   `json:"request_id"`
-		Command     string   `json:"command"`
-		Description string   `json:"description"`
-		Choices     []string `json:"choices"`
-		Error       string   `json:"error"`
-		Message     string   `json:"message"`
-		Detail      string   `json:"detail"`
-		TS          float64  `json:"ts"`
+		SessionID   string          `json:"session_id"`
+		RunID       string          `json:"run_id"`
+		MessageID   string          `json:"message_id"`
+		Delta       string          `json:"delta"`
+		Content     string          `json:"content"`
+		ToolName    string          `json:"tool_name"`
+		Name        string          `json:"name"`
+		Tool        string          `json:"tool"`
+		Status      string          `json:"status"`
+		RequestID   string          `json:"request_id"`
+		Command     string          `json:"command"`
+		Description string          `json:"description"`
+		Choices     []string        `json:"choices"`
+		Error       string          `json:"error"`
+		Message     string          `json:"message"`
+		Detail      string          `json:"detail"`
+		TS          float64         `json:"ts"`
+		Usage       json.RawMessage `json:"usage"`
+		Runtime     *Runtime        `json:"runtime"`
 	}
 	_ = json.Unmarshal(raw, &p)
 
@@ -206,6 +208,8 @@ func normalize(name string, raw []byte, logger *slog.Logger) Event {
 	ev.RunID = p.RunID
 	ev.MessageID = p.MessageID
 	ev.TS = p.TS
+	ev.Usage = parseUsage(p.Usage)
+	ev.Runtime = runtimeOf(p.Runtime, ev.Usage)
 
 	switch {
 	case name == "assistant.delta":
@@ -240,6 +244,68 @@ func normalize(name string, raw []byte, logger *slog.Logger) Event {
 	}
 
 	return ev
+}
+
+// parseUsage reads the terminal usage object. An absent key or JSON null means
+// "not reported" (nil); an empty object is a reported all-zero turn and stays
+// non-nil, because zero can be a real answer.
+func parseUsage(raw json.RawMessage) *Usage {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return nil
+	}
+	var body struct {
+		InputTokens      *json.Number `json:"input_tokens"`
+		OutputTokens     *json.Number `json:"output_tokens"`
+		TotalTokens      *json.Number `json:"total_tokens"`
+		CacheReadTokens  *json.Number `json:"cache_read_tokens"`
+		CacheWriteTokens *json.Number `json:"cache_write_tokens"`
+		Runtime          *Runtime     `json:"runtime"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil
+	}
+	usage := &Usage{
+		InputTokens:      numberValue(body.InputTokens),
+		OutputTokens:     numberValue(body.OutputTokens),
+		TotalTokens:      numberValue(body.TotalTokens),
+		CacheReadTokens:  numberValue(body.CacheReadTokens),
+		CacheWriteTokens: numberValue(body.CacheWriteTokens),
+		CacheReported:    body.CacheReadTokens != nil || body.CacheWriteTokens != nil,
+	}
+	// The runtime can ride inside usage on some builds; the caller falls back
+	// to it when the top-level object is empty.
+	if body.Runtime != nil {
+		usage.runtime = *body.Runtime
+	}
+	return usage
+}
+
+// runtimeOf prefers the terminal event's top-level runtime, then the copy some
+// builds nest inside usage. Empty values stay empty rather than guessed.
+func runtimeOf(top *Runtime, usage *Usage) Runtime {
+	if top != nil && (top.Provider != "" || top.Model != "") {
+		return Runtime{Provider: top.Provider, Model: top.Model}
+	}
+	if usage != nil {
+		return usage.runtime
+	}
+	return Runtime{}
+}
+
+func numberValue(value *json.Number) int64 {
+	if value == nil {
+		return 0
+	}
+	n, err := value.Int64()
+	if err == nil {
+		return n
+	}
+	f, err := value.Float64()
+	if err != nil {
+		return 0
+	}
+	return int64(f)
 }
 
 func toolStatus(name string) string {

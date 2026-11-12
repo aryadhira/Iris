@@ -4,6 +4,7 @@ import { PhBell, PhBellSlash, PhTrash, PhX } from '@phosphor-icons/vue'
 import { api } from '../lib/api'
 import { disablePush, enablePush, pushIsOn, pushSupported } from '../lib/push'
 import type { Reminder } from '../lib/types'
+import UsagePanel from './UsagePanel.vue'
 
 const props = defineProps<{ open: boolean; roomId: string }>()
 const emit = defineEmits<{ close: [] }>()
@@ -163,16 +164,16 @@ function dueLabel(iso: string): string {
           <div class="flex items-center justify-between gap-3 border-b border-line px-4 pb-3 pt-3">
             <div class="min-w-0">
               <h2 id="room-inspector-title" class="text-[15px] font-semibold tracking-tight text-ink">
-                Pengingat &amp; notifikasi
+                Biaya, pengingat &amp; notifikasi
               </h2>
               <p class="mt-0.5 text-[11.5px] text-quiet">
-                Iris yang mengingatkan, bukan Hermes.
+                Biaya dari token Hermes; pengingat dijalankan Iris.
               </p>
             </div>
             <button
               type="button"
               class="tap flex items-center justify-center rounded-lg text-quiet hover:text-ink"
-              aria-label="Tutup pengingat dan notifikasi"
+              aria-label="Tutup biaya, pengingat dan notifikasi"
               data-testid="close-inspector"
               @click="emit('close')"
             >
@@ -181,6 +182,10 @@ function dueLabel(iso: string): string {
           </div>
 
           <div class="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 py-3">
+            <UsagePanel :room-id="props.roomId" :open="props.open" />
+
+            <hr class="my-4 border-line" />
+
             <section aria-labelledby="reminder-heading">
               <div class="flex items-center justify-between px-2 pb-2">
                 <h3 id="reminder-heading" class="text-[12px] font-semibold uppercase tracking-wide text-muted">

@@ -324,6 +324,15 @@ def _summarise(sentences: list[str], note: str) -> str:
     return summary
 
 
+def split_sentences(text: str) -> list[str]:
+    """Split already-normalised speech into sentences for streaming.
+
+    The normaliser has already capped the summary at two sentences, so this is
+    usually one or two chunks. It never returns an empty sentence.
+    """
+    return _sentences(text)
+
+
 def normalise_for_speech(text: str) -> str:
     """Turn a written reply into the spoken summary Iris sends to edge-tts."""
     if not text or not text.strip():

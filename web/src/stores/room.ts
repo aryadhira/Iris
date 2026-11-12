@@ -27,6 +27,7 @@ export interface RoomStoreDeps {
     attachmentIds: string[],
     signal: AbortSignal,
   ) => Promise<Response>
+  retryMessage: (roomId: string, messageId: string, signal: AbortSignal) => Promise<Response>
   sleep: (ms: number) => Promise<void>
   reconnectDelays: number[]
   now: () => number
@@ -42,6 +43,7 @@ export const liveDeps: RoomStoreDeps = {
   stopRoom: (roomId) => api.stopRoom(roomId),
   sendMessage: (roomId, text, attachmentIds, signal) =>
     api.sendMessage(roomId, text, attachmentIds, signal),
+  retryMessage: (roomId, messageId, signal) => api.retryMessage(roomId, messageId, signal),
   sleep: (ms) => new Promise((resolve) => window.setTimeout(resolve, ms)),
   // Roughly 35 s of patience: long enough for a stored reply, short enough
   // that the screen stops claiming to retry while nothing is happening.
@@ -302,6 +304,9 @@ export function createRoomStore(
       state.phase = 'error'
       state.errorText = message
       state.turnStartedAt = 0
+      // The guard writes a visible system line in the room. Pull it in so the
+      // refusal is readable in the transcript, not only in the composer.
+      await reconcile()
       return
     }
 
@@ -309,6 +314,64 @@ export function createRoomStore(
     // chips while the reply streams.
     onAccepted?.()
     await consume(response)
+    await refreshContinuation()
+    await refreshApprovals()
+  }
+
+  /**
+   * Re-run the turn behind an existing user message. The server reuses that
+   * row, marks the old reply `superseded` and streams a new answer. Nothing is
+   * posted twice: a resend would leave a duplicate user message.
+   */
+  async function retry(userMessageId: string): Promise<void> {
+    if (state.archived) return
+    if (state.phase === 'streaming' || state.phase === 'reconnecting') return
+    if (userMessageId === '') return
+
+    state.errorText = ''
+    state.connectionLost = false
+    state.phase = 'streaming'
+    state.streamingText = ''
+    state.currentTool = ''
+    state.turnStartedAt = d.now()
+
+    // Dim the reply that is about to be replaced right away, so the transcript
+    // never shows two current answers while the new one streams.
+    let seen = false
+    for (const message of state.messages) {
+      if (message.id === userMessageId) {
+        seen = true
+        continue
+      }
+      if (!seen) continue
+      if (message.role === 'user') break
+      if (message.role === 'assistant') {
+        message.meta = { ...(message.meta ?? {}), superseded: true }
+      }
+    }
+
+    controller = new AbortController()
+    let response: Response
+    try {
+      response = await d.retryMessage(roomId, userMessageId, controller.signal)
+    } catch {
+      state.phase = 'error'
+      state.errorText = 'Pesan ini belum bisa diulang. Periksa koneksi lalu coba lagi.'
+      state.turnStartedAt = 0
+      // Undo the optimistic dim: no new reply exists to replace the old one.
+      await reconcile()
+      return
+    }
+    if (!response.ok) {
+      state.phase = 'error'
+      state.errorText = await readErrorMessage(response)
+      state.turnStartedAt = 0
+      await reconcile()
+      return
+    }
+
+    await consume(response)
+    await reconcile()
     await refreshContinuation()
     await refreshApprovals()
   }
@@ -551,6 +614,7 @@ export function createRoomStore(
     resolveApproval,
     stopRun,
     send,
+    retry,
     reload,
     clearReminderNotice,
     dispose,

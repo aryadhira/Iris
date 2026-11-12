@@ -15,6 +15,7 @@ import (
 
 	"github.com/aryadhira/iris/internal/auth"
 	"github.com/aryadhira/iris/internal/hermes"
+	"github.com/aryadhira/iris/internal/pricing"
 	"github.com/aryadhira/iris/internal/reminder"
 	"github.com/aryadhira/iris/internal/store"
 	"github.com/aryadhira/iris/internal/webpush"
@@ -34,6 +35,8 @@ type Store interface {
 	ListAllMessages(ctx context.Context, roomID uuid.UUID) ([]store.Message, error)
 	GetMessage(ctx context.Context, id uuid.UUID) (store.Message, error)
 	GetLatestAssistantMessage(ctx context.Context, roomID uuid.UUID) (store.Message, error)
+	ListMessagesAfter(ctx context.Context, arg store.ListMessagesAfterParams) ([]store.Message, error)
+	MarkMessageSuperseded(ctx context.Context, id uuid.UUID) (store.Message, error)
 	SearchMessages(ctx context.Context, arg store.SearchMessagesParams) ([]store.SearchMessagesRow, error)
 
 	CreateContinuation(ctx context.Context, arg store.CreateContinuationParams) (store.Continuation, error)
@@ -74,6 +77,13 @@ type Store interface {
 	ListPushSubscriptions(ctx context.Context) ([]store.PushSubscription, error)
 	UpsertPushSubscription(ctx context.Context, arg store.UpsertPushSubscriptionParams) (store.PushSubscription, error)
 	DeletePushSubscription(ctx context.Context, endpoint string) (int64, error)
+
+	InsertUsage(ctx context.Context, arg store.InsertUsageParams) (store.Usage, error)
+	UsageTotals(ctx context.Context, arg store.UsageTotalsParams) (store.UsageTotalsRow, error)
+	UsageDaily(ctx context.Context, arg store.UsageDailyParams) ([]store.UsageDailyRow, error)
+	UsageByRoom(ctx context.Context, arg store.UsageByRoomParams) ([]store.UsageByRoomRow, error)
+	UsageSpendBetween(ctx context.Context, arg store.UsageSpendBetweenParams) (store.UsageSpendBetweenRow, error)
+	InsertBudgetOverride(ctx context.Context, arg store.InsertBudgetOverrideParams) (store.BudgetOverride, error)
 }
 
 // PushNotifier is the seam for Web Push. The real implementation lives in
@@ -106,6 +116,10 @@ type Server struct {
 	push             PushNotifier
 	reminderLoc      *time.Location
 	reminderInterval time.Duration
+	// prices is the editable price table. A missing file means "cost unknown",
+	// never "cost zero".
+	prices      *pricing.Table
+	dailyBudget float64
 	// bootTime distinguishes "the scheduler is late by one tick" from "the
 	// due time passed while irisd was down".
 	bootTime time.Time
@@ -131,6 +145,8 @@ type Options struct {
 	Push                 PushNotifier
 	RunReminders         bool
 	ReminderInterval     time.Duration
+	Prices               *pricing.Table
+	DailyBudgetUSD       float64
 }
 
 // New builds the Echo application with all routes registered.
@@ -154,6 +170,11 @@ func New(opts Options) *echo.Echo {
 		schemaVersion:   opts.SchemaVersion,
 		push:            opts.Push,
 		reminderLoc:     reminder.Jakarta(),
+		prices:          opts.Prices,
+		dailyBudget:     opts.DailyBudgetUSD,
+	}
+	if s.prices == nil {
+		s.prices = pricing.New("")
 	}
 	if s.now == nil {
 		s.now = time.Now
@@ -187,6 +208,7 @@ func New(opts Options) *echo.Echo {
 	e.PATCH("/api/rooms/:id/prompt", s.updateRoomPrompt)
 	e.GET("/api/rooms/:id/messages", s.listMessages)
 	e.POST("/api/rooms/:id/messages", s.streamMessage)
+	e.POST("/api/rooms/:id/messages/:mid/retry", s.retryMessage)
 	e.GET("/api/rooms/:id/export.md", s.exportRoom)
 	e.GET("/api/rooms/:id/continuation", s.getContinuation)
 	e.POST("/api/rooms/:id/continuation/cancel", s.cancelContinuation)
@@ -208,11 +230,13 @@ func New(opts Options) *echo.Echo {
 
 	e.POST("/api/voice/transcribe", s.voiceTranscribe)
 	e.POST("/api/voice/speak", s.voiceSpeak)
+	e.POST("/api/voice/speak/stream", s.voiceSpeakStream)
 
 	e.GET("/api/files/:id", s.downloadFile)
 	e.DELETE("/api/files/:id", s.deleteFile)
 
 	e.GET("/api/search", s.searchMessages)
+	e.GET("/api/usage", s.getUsage)
 
 	// Unknown API paths answer JSON; they must never fall through to the SPA
 	// history handler and return index.html.

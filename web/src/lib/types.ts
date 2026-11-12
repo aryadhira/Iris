@@ -50,6 +50,8 @@ export interface MessageMeta {
   procs?: string[]
   tools?: ToolActivity[]
   statusLine?: string
+  /** True when a retry replaced this reply. It stays visible, dimmed. */
+  superseded?: boolean
 }
 
 /** One reminder owned by a room. */
@@ -110,3 +112,52 @@ export interface ChatMessage {
 }
 
 export type TurnPhase = 'idle' | 'streaming' | 'reconnecting' | 'error'
+
+/** Cost meter shapes, exactly as irisd returns them. Cost is never invented. */
+export interface UsageTotals {
+  turns: number
+  input_tokens: number
+  output_tokens: number
+  total_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+  cost_usd: number
+  unknown_cost_turns: number
+  unreported_turns: number
+  unreported_cache_turns: number
+}
+
+export interface UsageDay {
+  day: string
+  turns: number
+  tokens: number
+  cost_usd: number
+  unknown_cost_turns: number
+}
+
+export interface UsageRoom {
+  room_id: string
+  room_name: string
+  turns: number
+  tokens: number
+  cost_usd: number
+  unknown_cost_turns: number
+}
+
+export interface UsageBudget {
+  enabled: boolean
+  usd?: number
+  spent_usd?: number
+  unknown_cost_turns?: number
+}
+
+export interface UsageResponse {
+  from: string
+  to: string
+  totals: UsageTotals
+  today: UsageTotals
+  days: UsageDay[]
+  rooms: UsageRoom[]
+  budget: UsageBudget
+  prices: { file: string; entries: number; error?: string }
+}

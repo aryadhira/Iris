@@ -6,6 +6,9 @@ Run from the repository root with the voice-HUD virtualenv:
 """
 from __future__ import annotations
 
+import base64
+import json
+import time
 import unittest
 
 from aiohttp.test_utils import TestClient, TestServer
@@ -62,6 +65,53 @@ class VoiceServerTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(spoken.strip(), "the header must name what was spoken")
         for banned in ("*", "#", "`", "|", "http", "print"):
             self.assertNotIn(banned, spoken, spoken)
+
+    async def test_speak_stream_sends_the_first_sentence_before_the_last(self):
+        text = (
+            "**Selesai**, port delapan ribu kosong. "
+            "Server lama sudah dimatikan, jadi tidak ada yang bentrok."
+        )
+        response = await self.client.post("/speak/stream", json={"text": text})
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.headers["Content-Type"], "application/x-ndjson")
+
+        frames = []
+        first_audio_at = None
+        done_at = None
+        while True:
+            line = await response.content.readline()
+            if not line:
+                break
+            frame = json.loads(line)
+            frames.append(frame)
+            if frame["type"] == "audio" and first_audio_at is None:
+                first_audio_at = time.perf_counter()
+            if frame["type"] == "done":
+                done_at = time.perf_counter()
+
+        self.assertEqual(frames[0]["type"], "meta")
+        self.assertEqual(frames[0]["sentences"], 2)
+        self.assertEqual(frames[-1]["type"], "done")
+        audio_frames = [frame for frame in frames if frame["type"] == "audio"]
+        self.assertEqual(len(audio_frames), 2, frames)
+        self.assertIsNotNone(first_audio_at)
+        self.assertIsNotNone(done_at)
+        # Sentence 2 was still being synthesised when sentence 1 left.
+        self.assertGreater(done_at - first_audio_at, 0.02, "the stream was buffered")
+
+        audio = b"".join(base64.b64decode(frame["audio"]) for frame in audio_frames)
+        self.assertGreater(len(audio), 2000, "edge-tts returned no real audio")
+        for banned in ("*", "#", "`", "|"):
+            self.assertNotIn(banned, frames[0]["spoken"], frames[0]["spoken"])
+
+        result = await self.client.post(
+            "/transcribe", data=audio, headers={"Content-Type": "audio/mpeg"}
+        )
+        self.assertEqual(result.status, 200)
+        body = await result.json()
+        transcript = body["text"].lower()
+        self.assertIn("selesai", transcript)
+        self.assertIn("port", transcript)
 
     async def test_speak_rejects_empty_text(self):
         response = await self.client.post("/speak", json={"text": "   "})

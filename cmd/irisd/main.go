@@ -18,12 +18,13 @@ import (
 	"github.com/aryadhira/iris/internal/config"
 	"github.com/aryadhira/iris/internal/hermes"
 	"github.com/aryadhira/iris/internal/httpapi"
+	"github.com/aryadhira/iris/internal/pricing"
 	"github.com/aryadhira/iris/internal/store"
 	irisvoice "github.com/aryadhira/iris/internal/voice"
 	"github.com/aryadhira/iris/internal/webpush"
 )
 
-const version = "0.1.0-p7"
+const version = "0.1.0-p8"
 
 func main() {
 	if err := run(); err != nil {
@@ -80,6 +81,18 @@ func run() error {
 		pushNotifier = pushService
 	}
 
+	priceTable := pricing.New(cfg.PricesFile)
+	if entries, err := priceTable.Entries(); err != nil {
+		logger.Warn("price table has a problem; costs are unknown until it is fixed", "file", cfg.PricesFile, "error", err)
+	} else {
+		logger.Info("price table loaded", "file", cfg.PricesFile, "models", entries)
+	}
+	if cfg.DailyBudgetUSD > 0 {
+		logger.Info("daily budget guard on", "usd", cfg.DailyBudgetUSD)
+	} else {
+		logger.Info("daily budget guard off (IRIS_DAILY_BUDGET_USD is empty)")
+	}
+
 	e := httpapi.New(httpapi.Options{
 		Store:            queries,
 		Hermes:           hermesClient,
@@ -96,6 +109,8 @@ func run() error {
 		SchemaVersion:    schemaVersion,
 		Push:             pushNotifier,
 		RunReminders:     true,
+		Prices:           priceTable,
+		DailyBudgetUSD:   cfg.DailyBudgetUSD,
 	})
 
 	srv := &http.Server{

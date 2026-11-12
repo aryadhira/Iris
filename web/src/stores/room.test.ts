@@ -343,4 +343,30 @@ describe('room store', () => {
     expect(store.state.stopNotice).toBe('')
   })
 
+  it('retries the same user message and dims the old reply instead of deleting it', async () => {
+    const first = [stored('a1', 'assistant', 'balasan lama', 5), stored('u1', 'user', 'halo', 1)]
+    const retried = [
+      { ...stored('a2', 'assistant', 'balasan baru', 9), meta: {} },
+      { ...stored('a1', 'assistant', 'balasan lama', 5), meta: { superseded: true } },
+      stored('u1', 'user', 'halo', 1),
+    ]
+    const { deps } = makeDeps({ list: [first, first, retried], stream: DELTA_DONE })
+    let retriedId = ''
+    deps.retryMessage = async (_roomId, messageId) => {
+      retriedId = messageId
+      return new Response(sse(DELTA_DONE), { status: 200 })
+    }
+
+    const store = createRoomStore(ROOM, deps)
+    await store.load()
+    await store.retry('u1')
+
+    expect(retriedId).toBe('u1')
+    const users = store.state.messages.filter((m) => m.role === 'user')
+    expect(users).toHaveLength(1)
+    const old = store.state.messages.find((m) => m.id === 'a1')
+    expect(old?.meta?.superseded).toBe(true)
+    expect(store.state.messages.some((m) => m.id === 'a2')).toBe(true)
+    expect(store.state.phase).toBe('idle')
+  })
 })

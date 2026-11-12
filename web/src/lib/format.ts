@@ -63,3 +63,13 @@ export function shortDate(iso: string): string {
     year: 'numeric',
   }).format(then)
 }
+
+/**
+ * Money for the cost meter. Sub-cent turns keep four decimals so a real
+ * $0.0025 never reads as a free $0.00.
+ */
+export function formatUSD(amount: number): string {
+  if (!Number.isFinite(amount)) return '—'
+  if (amount !== 0 && Math.abs(amount) < 0.01) return `$${amount.toFixed(4)}`
+  return `$${amount.toFixed(2)}`
+}

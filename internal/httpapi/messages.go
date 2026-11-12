@@ -130,6 +130,22 @@ func (s *Server) streamMessage(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, errorBody("Iris could not open that room."))
 	}
 
+	// The budget is checked once, before anything is written: a refused message
+	// leaves no user row, no reminder and no run behind.
+	userMessageID := uuid.New()
+	decision, guardErr := s.budgetCheck(
+		c.Request().Context(),
+		room,
+		text,
+		len(attachmentIDs) > 0,
+	)
+	if guardErr != nil {
+		return c.JSON(http.StatusInternalServerError, errorBody("Iris tidak bisa memeriksa batas biaya. Tidak ada yang terkirim."))
+	}
+	if !decision.Allowed {
+		return c.JSON(http.StatusTooManyRequests, errorBody(decision.Refusal))
+	}
+
 	// Boss' own sentence can carry a reminder. Parse before dispatch; if there
 	// is no explicit time this is a no-op and Hermes answers normally.
 	createdReminder, _ := s.createParsedReminder(c.Request().Context(), room, text)
@@ -140,7 +156,7 @@ func (s *Server) streamMessage(c echo.Context) error {
 	}
 
 	userMessage, err := s.store.InsertMessage(c.Request().Context(), store.InsertMessageParams{
-		ID:     uuid.New(),
+		ID:     userMessageID,
 		RoomID: room.ID,
 		Role:   "user",
 		Body:   text,
@@ -149,6 +165,13 @@ func (s *Server) streamMessage(c echo.Context) error {
 	if err != nil {
 		s.logger.Error("cannot save user message", "error", err)
 		return c.JSON(http.StatusInternalServerError, errorBody("Iris tidak bisa menyimpan pesanmu. Tidak ada yang terkirim."))
+	}
+	// The user row exists now, so the override receipt can point at it. A
+	// failed receipt is logged loudly but must not drop the message Boss sent.
+	if decision.Override {
+		if err := s.recordBudgetOverride(c.Request().Context(), room.ID, &userMessage.ID, decision.Spent, decision.Budget); err != nil {
+			s.logger.Error("cannot log budget override", "error", err, "room_id", room.ID.String())
+		}
 	}
 	for _, f := range attachments {
 		if _, err := s.store.AttachFileToMessage(c.Request().Context(), store.AttachFileToMessageParams{
@@ -169,19 +192,34 @@ func (s *Server) streamMessage(c echo.Context) error {
 		"lanjut otomatis dibatalkan — ada pesan baru dari Boss.",
 	)
 
-	promptText := text
-	if len(attachments) > 0 {
-		lines := make([]string, 0, len(attachments))
-		for _, f := range attachments {
-			lines = append(lines, fmt.Sprintf("Lampiran: %s (%s, %s)", f.Path, files.HumanType(f.Mime, f.Name), files.FormatSize(f.Size)))
-		}
-		if promptText == "" {
-			promptText = strings.Join(lines, "\n") + "\n\nBoss mengirim lampiran tanpa pesan."
-		} else {
-			promptText = strings.Join(lines, "\n") + "\n\n" + promptText
-		}
-	}
+	promptText := promptWithAttachments(text, attachments)
 
+	return s.streamTurn(c, room, promptText, createdReminder)
+}
+
+// promptWithAttachments is shared by a new message and a retry, so a retried
+// turn reaches Hermes with the same file lines the first attempt had.
+func promptWithAttachments(text string, attachments []store.File) string {
+	promptText := text
+	if len(attachments) == 0 {
+		return promptText
+	}
+	lines := make([]string, 0, len(attachments))
+	for _, f := range attachments {
+		lines = append(lines, fmt.Sprintf("Lampiran: %s (%s, %s)", f.Path, files.HumanType(f.Mime, f.Name), files.FormatSize(f.Size)))
+	}
+	if promptText == "" {
+		return strings.Join(lines, "\n") + "\n\nBoss mengirim lampiran tanpa pesan."
+	}
+	return strings.Join(lines, "\n") + "\n\n" + promptText
+}
+
+func (s *Server) streamTurn(
+	c echo.Context,
+	room store.Room,
+	promptText string,
+	createdReminder *store.Reminder,
+) error {
 	headers := c.Response().Header()
 	headers.Set(echo.HeaderContentType, "text/event-stream")
 	headers.Set("Cache-Control", "no-cache")
@@ -271,6 +309,15 @@ func (s *Server) streamMessage(c echo.Context) error {
 			saved = row
 		}
 	}
+
+	// Meter the turn whether or not it produced visible text: a stopped run
+	// still spent tokens, and a terminal payload without usage must leave a
+	// visible "not reported" row.
+	var messageID *uuid.UUID
+	if saved != nil {
+		messageID = &saved.ID
+	}
+	s.recordUsage(turnCtx, room, outcome, messageID)
 
 	// Nobody watching? A finished turn gets one push. A phone that is still
 	// attached to this room already sees the reply and stays quiet.

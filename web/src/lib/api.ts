@@ -7,6 +7,7 @@ import type {
   RoomFile,
   SearchResult,
   StoredMessage,
+  UsageResponse,
 } from './types'
 import { filenameFromDisposition } from './files'
 
@@ -125,6 +126,29 @@ export const api = {
       body: JSON.stringify({ text, attachmentIds }),
       signal,
     })
+  },
+
+  /**
+   * Re-run the turn behind an existing user message. The server reuses that
+   * row and streams a fresh reply; it never creates a second user message.
+   */
+  retryMessage(roomId: string, messageId: string, signal?: AbortSignal): Promise<Response> {
+    return fetch(
+      `/api/rooms/${encodeURIComponent(roomId)}/messages/${encodeURIComponent(messageId)}/retry`,
+      {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { Accept: 'text/event-stream' },
+        signal,
+      },
+    )
+  },
+
+  getUsage(roomId?: string): Promise<UsageResponse> {
+    const params = new URLSearchParams()
+    if (roomId) params.set('room', roomId)
+    const query = params.toString()
+    return request(`/api/usage${query ? `?${query}` : ''}`)
   },
 
   async listRoomFiles(roomId: string): Promise<RoomFile[]> {
@@ -266,6 +290,17 @@ export const api = {
     })
     if (!response.ok) throw new ApiError(await readError(response), response.status)
     return response.blob()
+  },
+
+  /** The streaming speech response; the caller parses NDJSON line by line. */
+  speakStream(text: string, signal?: AbortSignal): Promise<Response> {
+    return fetch('/api/voice/speak/stream', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/x-ndjson' },
+      body: JSON.stringify({ text }),
+      signal,
+    })
   },
 
   /**

@@ -47,6 +47,11 @@ type Config struct {
 	// returned to the browser.
 	VAPIDKeyFile string
 	VAPIDSubject string
+	// PricesFile is Boss-editable. A missing file means costs are unknown, not
+	// free; it is never created with invented numbers.
+	PricesFile string
+	// DailyBudgetUSD is 0 when the guard is off. An empty env var means off.
+	DailyBudgetUSD float64
 }
 
 // Load reads IRIS_* variables, validates them, and refuses clearly when a
@@ -106,6 +111,18 @@ func Load() (*Config, error) {
 	}
 	cfg.VAPIDKeyFile = vapidPath
 
+	pricesPath, err := ExpandHome(envOr("IRIS_PRICES_FILE", "~/.config/iris/prices.json"))
+	if err != nil {
+		return nil, fmt.Errorf("IRIS_PRICES_FILE is not a usable path: %w", err)
+	}
+	cfg.PricesFile = pricesPath
+
+	budget, err := parseBudget(os.Getenv("IRIS_DAILY_BUDGET_USD"))
+	if err != nil {
+		return nil, fmt.Errorf("IRIS_DAILY_BUDGET_USD must be a positive amount in USD or empty: %w", err)
+	}
+	cfg.DailyBudgetUSD = budget
+
 	keyPath, err := ExpandHome(cfg.HermesKeyFile)
 	if err != nil {
 		return nil, fmt.Errorf("IRIS_HERMES_KEY_FILE is not a usable path: %w", err)
@@ -139,6 +156,19 @@ func parseSeconds(v string) (time.Duration, error) {
 		return 0, fmt.Errorf("got %q", v)
 	}
 	return time.Duration(n) * time.Second, nil
+}
+
+// parseBudget treats an empty or zero value as "guard off".
+func parseBudget(v string) (float64, error) {
+	raw := strings.TrimSpace(v)
+	if raw == "" {
+		return 0, nil
+	}
+	n, err := strconv.ParseFloat(raw, 64)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("got %q", v)
+	}
+	return n, nil
 }
 
 func parseBool(v string) (bool, error) {

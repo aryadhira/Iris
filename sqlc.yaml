@@ -33,6 +33,16 @@ sql:
               type: "Time"
               import: "time"
               pointer: true
+          - db_type: "pg_catalog.float8"
+            nullable: true
+            go_type:
+              type: "float64"
+              pointer: true
+          - db_type: "double precision"
+            nullable: true
+            go_type:
+              type: "float64"
+              pointer: true
           - db_type: "text"
             nullable: true
             go_type:

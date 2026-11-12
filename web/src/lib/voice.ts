@@ -33,6 +33,11 @@ export interface AudioHandle {
 
 export interface SpeakerDeps {
   speak: (text: string) => Promise<Blob>
+  /**
+   * Streaming speech. Each yielded Blob is one sentence's audio, in order.
+   * Omitting it falls back to the buffered speak() path.
+   */
+  speakStream?: (text: string, signal: AbortSignal) => AsyncIterable<Blob>
   createAudio: (blob: Blob) => AudioHandle
 }
 

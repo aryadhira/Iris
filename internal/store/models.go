@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Approval struct {
@@ -32,6 +33,16 @@ type AuthSession struct {
 	CreatedAt time.Time
 	ExpiresAt time.Time
 	UserAgent string
+}
+
+type BudgetOverride struct {
+	ID        uuid.UUID
+	RoomID    uuid.UUID
+	Day       pgtype.Date
+	SpentUsd  float64
+	BudgetUsd float64
+	MessageID *uuid.UUID
+	CreatedAt time.Time
 }
 
 type Continuation struct {
@@ -111,4 +122,22 @@ type Run struct {
 	StartedAt  time.Time
 	UpdatedAt  time.Time
 	FinishedAt *time.Time
+}
+
+type Usage struct {
+	ID               uuid.UUID
+	RunID            string
+	RoomID           uuid.UUID
+	MessageID        *uuid.UUID
+	Provider         string
+	Model            string
+	InputTokens      int64
+	OutputTokens     int64
+	TotalTokens      int64
+	CacheReadTokens  int64
+	CacheWriteTokens int64
+	CostUsd          *float64
+	UsageReported    bool
+	CacheReported    bool
+	CreatedAt        time.Time
 }

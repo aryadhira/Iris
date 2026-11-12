@@ -6,6 +6,7 @@ the browser never talks to this process.
 ```
 POST /transcribe   raw audio bytes (webm/opus, ogg, wav, mp3) -> {text, ms}
 POST /speak        {"text": "..."} -> audio/mpeg + X-Iris-Spoken-Text
+POST /speak/stream {"text": "..."} -> application/x-ndjson (see below)
 GET  /health       {ok, model, voice, warm}
 ```
 
@@ -18,6 +19,32 @@ quick tap that records nothing is a normal event, never a 500.
 (`id-ID-GadisNeural`, rate `-8%`). `X-Iris-Spoken-Text` is the exact sentence
 the engine received, which is how tests prove markdown and secrets never reach
 TTS. The full formatted answer stays on screen.
+
+## Streaming speech (`/speak/stream`)
+
+Same sanitiser, same voice, but the summary is split into sentences and each
+sentence is synthesised and written immediately. The wire format is
+**newline-delimited JSON** (`application/x-ndjson`), one object per line, UTF-8:
+
+```json
+{"type":"meta","spoken":"Selesai, port kosong. Detailnya ada di layar.","voice":"id-ID-GadisNeural","sentences":2}
+{"type":"audio","index":0,"text":"Selesai, port kosong.","ms":812,"audio":"<base64 MP3>"}
+{"type":"audio","index":1,"text":"Detailnya ada di layar.","ms":744,"audio":"<base64 MP3>"}
+{"type":"done","chunks":2,"total_ms":1610}
+```
+
+- `meta` leaves as soon as the text is split; it carries no audio.
+- Each `audio.audio` is a complete MP3 chunk, base64-encoded (no data URL).
+  Concatenate the decoded bytes in `index` order to get the full summary.
+- A sentence that fails to synthesise emits `{"type":"error","index":N,...}` and
+  the stream continues with the next sentence.
+- `done` is the last line. `chunks` is the number of audio chunks actually
+  produced; it can be smaller than `sentences` after an engine failure.
+- `X-Iris-Spoken-Text` is also set for callers that only want to know what was
+  spoken.
+
+`POST /speak` is unchanged and still buffers the whole summary; it remains the
+fallback for clients that cannot consume a stream.
 
 ## Run it
 
@@ -47,12 +74,16 @@ Then start irisd with the same URL:
 IRIS_VOICE_URL=http://127.0.0.1:3310 irisd
 ```
 
-`irisd` proxies the two endpoints behind its cookie auth:
+`irisd` proxies the three endpoints behind its cookie auth:
 
 ```
 POST /api/voice/transcribe   multipart field "audio" -> {text, reason?}
 POST /api/voice/speak        {"text": "..."} -> audio/mpeg
+POST /api/voice/speak/stream {"text": "..."} -> application/x-ndjson
 ```
+
+The stream proxy flushes every line (`http.Flusher`), so sentence 1's audio
+reaches the browser while sentence 2 is still being synthesised.
 
 If the sidecar is down both answer **503** with
 `suara sedang tidak tersedia — coba lagi sebentar.`, not a stack trace.

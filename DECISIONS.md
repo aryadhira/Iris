@@ -131,3 +131,32 @@ backup that was never copied is not a backup. Reboot survival has been claimed b
 can be proven from this machine. A real phone and a real reboot remain Boss' measurements. A push
 library upgrade is one dependency, pinned and reported in the changelog. The bootcheck service must
 be enabled by `deploy/install.sh` and requires linger to run without a login session.
+
+## ADR-009 — Cost is an estimate from reported tokens; the budget guard refuses before writing
+
+**Status:** accepted (2026-11-13)
+
+**Context.** Hermes' terminal payload is the only honest source of token counts: `usage` plus the
+`{provider, model}` that actually served the turn. A missing usage object is not a free turn, and a
+model with no published rate is not a $0 turn. A daily budget that drops messages silently is worse
+than no guard, and a guard that inspects a running turn would kill work mid-flight.
+
+**Decision.**
+1. One `usage` row per assistant turn, linked to the message. Zeros plus `usage_reported=false` when
+   the payload had no usage; `cost_usd=NULL` when the model has no price. The live session stream on
+   this build reports three of five counters, so the missing cache counters are stored as 0 with
+   `cache_reported=false` and the cost is labelled an estimate.
+2. Prices live in `~/.config/iris/prices.json`, generated from the Hermes snapshot by
+   `scripts/seed-prices.py` and editable by Boss. A missing or null rate is never guessed.
+3. `IRIS_DAILY_BUDGET_USD` is read at boot. The check happens once, before the user row is written;
+   a refusal is a visible Indonesian system line and HTTP 429. `lanjut` writes one
+   `budget_overrides` row (linked to its user message) and lets exactly one turn through.
+4. Streaming speech is newline-delimited JSON with one complete MP3 chunk per sentence. The first
+   audio chunk leaves before sentence 2 is synthesised; `POST /speak` stays unchanged.
+5. Retry reuses the user row and marks the previous assistant reply `superseded`; the old reply is
+   dimmed and labelled, never deleted.
+
+**Consequences.** The cost is an estimate, not an invoice: a gateway that omits cache counters makes
+the estimate an upper bound, and a turn with an unknown model contributes tokens but no dollars, so it
+cannot count toward the budget. Those gaps are visible in the API (`unknown_cost_turns`,
+`unreported_turns`, `cache_reported`) and in the changelog, not hidden behind a zero.

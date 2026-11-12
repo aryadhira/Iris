@@ -115,6 +115,26 @@ const lastAssistant = computed(() => {
   }
   return undefined
 })
+const lastUserMessage = computed(() => {
+  for (let i = messages.value.length - 1; i >= 0; i -= 1) {
+    if (messages.value[i].role === 'user') return messages.value[i]
+  }
+  return undefined
+})
+const assistantAfterLastUser = computed(() => {
+  const user = lastUserMessage.value
+  if (!user) return undefined
+  const index = messages.value.findIndex((message) => message.id === user.id)
+  return messages.value.slice(index + 1).find((message) => message.role === 'assistant')
+})
+/** A failed turn that left no assistant bubble still needs a visible retry. */
+const showEmptyRetry = computed(
+  () =>
+    phase.value === 'error' &&
+    !isWorking.value &&
+    Boolean(lastUserMessage.value) &&
+    !assistantAfterLastUser.value,
+)
 
 interface TimelineItem {
   key: string
@@ -366,9 +386,23 @@ function retry(): void {
   if (!current || uploadBlock.value !== '') return
   const text = current.state.draft
   const ready = attachments.value?.ready ?? []
-  if (text.trim() === '' && ready.length === 0) return
+  if (text.trim() === '' && ready.length === 0) {
+    // Nothing typed: this is a retry of the failed turn, not a resend.
+    const user = lastUserMessage.value
+    if (user) retryFrom(user)
+    return
+  }
   nearBottom.value = true
   void current.send(text, ready, () => attachments.value?.clearReady())
+}
+
+/** Retry reuses the user message; it never posts a second one. */
+function retryFrom(message: ChatMessage): void {
+  const current = store.value
+  if (!current || isWorking.value || archived.value) return
+  if (message.role !== 'user') return
+  nearBottom.value = true
+  void current.retry(message.id)
 }
 
 function addFiles(files: File[]): void {
@@ -728,7 +762,10 @@ onBeforeUnmount(() => {
                     :message="item.message"
                     :speaking="speaker.state.playingId === item.message.id"
                     :loading-speech="speaker.state.loadingId === item.message.id"
+                    :can-retry="item.message.role === 'user'"
+                    :retry-disabled="isWorking || archived"
                     @speak="speakMessage(item.message)"
+                    @retry="retryFrom(item.message)"
                   />
                 </li>
                 <li v-else-if="item.approval">
@@ -767,9 +804,29 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
+            <!-- A failed turn that produced no text is still a real failure:
+                 it gets a visible retry, not a silent empty gap. -->
+            <div v-if="showEmptyRetry" class="flex gap-3" data-testid="empty-reply">
+              <BrandMark :size="26" class="mt-0.5" />
+              <div class="min-w-0 flex-1">
+                <p class="text-[13px] leading-relaxed text-muted">
+                  Hermes tidak mengirim balasan untuk pesan ini.
+                </p>
+                <button
+                  type="button"
+                  class="tap mt-2 inline-flex h-11 items-center rounded-xl border border-line px-3 text-[13px] text-ink hover:border-orchid/50 disabled:opacity-60"
+                  :disabled="isWorking || archived"
+                  data-testid="retry-empty"
+                  @click="lastUserMessage && retryFrom(lastUserMessage)"
+                >
+                  Coba lagi
+                </button>
+              </div>
+            </div>
+
             <!-- A pending safety-net follow-up is live, not a black box. -->
             <ContinuationLine
-              v-else-if="continuation"
+              v-if="!isWorking && continuation"
               :continuation="continuation"
               @cancel="stopContinuation"
             />
@@ -798,9 +855,9 @@ onBeforeUnmount(() => {
         <p class="text-[13px] leading-snug text-muted">{{ errorText }}</p>
         <div class="mt-1.5 flex items-center gap-3">
           <button
-            v-if="hasDraft && !isWorking"
+            v-if="(hasDraft || lastUserMessage) && !isWorking"
             type="button"
-            class="text-[12.5px] font-medium text-orchid hover:text-orchid/80"
+            class="inline-flex h-11 items-center text-[12.5px] font-medium text-orchid hover:text-orchid/80"
             @click="retry"
           >
             Coba lagi

@@ -118,6 +118,151 @@ describe('barge-in', () => {
   })
 })
 
+describe('streaming speech', () => {
+  function deferred() {
+    let resolve!: () => void
+    const promise = new Promise<void>((res) => {
+      resolve = res
+    })
+    return { promise, resolve }
+  }
+
+  async function waitFor(condition: () => boolean, timeoutMs = 2000): Promise<void> {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      if (condition()) return
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    throw new Error('condition never became true')
+  }
+
+  it('flips to "membaca…" on the first chunk, before the stream finishes', async () => {
+    const firstArrived = deferred()
+    const release = deferred()
+    const played: string[] = []
+    const blobs = [new Blob(['one']), new Blob(['two'])]
+    let finished = false
+
+    async function* stream() {
+      yield blobs[0]
+      firstArrived.resolve()
+      await release.promise
+      yield blobs[1]
+      finished = true
+    }
+
+    let created = 0
+    const speaker = createSpeakerStore({
+      speakStream: stream,
+      speak: vi.fn(async () => new Blob()),
+      createAudio: () => {
+        const id = String(created++)
+        let ended: (() => void) | null = null
+        return {
+          play: async () => {
+            played.push(id)
+            await Promise.resolve()
+            ended?.()
+          },
+          pause: vi.fn(),
+          dispose: vi.fn(),
+          get onended() {
+            return ended
+          },
+          set onended(handler: (() => void) | null) {
+            ended = handler
+          },
+        }
+      },
+    })
+
+    const running = speaker.toggle('message-1', 'Satu. Dua.')
+    await firstArrived.promise
+    await waitFor(() => speaker.state.playingId === 'message-1')
+
+    // The state appeared while the second sentence was still being
+    // synthesised, which is the whole point of the stream.
+    expect(finished).toBe(false)
+    expect(speaker.state.playingId).toBe('message-1')
+
+    release.resolve()
+    await running
+    await waitFor(() => played.length === 2)
+    expect(played).toEqual(['0', '1'])
+  })
+
+  it('barge-in aborts the whole queue', async () => {
+    let aborted = false
+    async function* stream(_text: string, signal: AbortSignal) {
+      yield new Blob(['one'])
+      await new Promise<void>((resolve) => {
+        signal.addEventListener(
+          'abort',
+          () => {
+            aborted = true
+            resolve()
+          },
+          { once: true },
+        )
+      })
+      // A well-behaved sidecar would stop here; anything yielded after abort
+      // must not play.
+      yield new Blob(['two'])
+    }
+
+    const disposed = vi.fn()
+    const speaker = createSpeakerStore({
+      speakStream: stream,
+      speak: vi.fn(async () => new Blob()),
+      createAudio: () => ({
+        play: vi.fn(async () => {}),
+        pause: vi.fn(),
+        dispose: disposed,
+        onended: null,
+      }),
+    })
+
+    const running = speaker.toggle('message-1', 'Satu. Dua.')
+    await waitFor(() => speaker.state.playingId === 'message-1')
+    speaker.stop()
+    await running
+    await waitFor(() => aborted)
+    expect(speaker.state.playingId).toBe('')
+    expect(speaker.state.loadingId).toBe('')
+    expect(disposed).toHaveBeenCalled()
+  })
+
+  it('skips a chunk that fails to play and keeps going', async () => {
+    async function* stream() {
+      yield new Blob(['bad'])
+      yield new Blob(['good'])
+    }
+    const played: string[] = []
+    let created = 0
+    const speaker = createSpeakerStore({
+      speakStream: stream,
+      speak: vi.fn(async () => new Blob()),
+      createAudio: () => {
+        const id = String(created++)
+        return {
+          play: async () => {
+            if (id === '0') throw new Error('decode failed')
+            played.push(id)
+          },
+          pause: vi.fn(),
+          dispose: vi.fn(),
+          onended: null,
+        }
+      },
+    })
+
+    await speaker.toggle('message-1', 'Satu. Dua.')
+    await waitFor(() => played.length === 1)
+    expect(played).toEqual(['1'])
+    expect(speaker.state.errorText).toBe('')
+  })
+})
+
 describe('permission copy', () => {
   it('renders an Indonesian HTTPS/Tailscale message, never an English DOM error', async () => {
     const denied = Object.assign(new Error('Permission denied'), { name: 'NotAllowedError' })

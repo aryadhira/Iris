@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import unittest
 
-from voice.normalise import normalise_for_speech, number_to_words
+from voice.normalise import normalise_for_speech, number_to_words, split_sentences
 
 
 class TestNumbers(unittest.TestCase):
@@ -190,3 +190,15 @@ class TestHardCap(unittest.TestCase):
         out = normalise_for_speech("Selesai. Port 8080 kosong.")
         # numbers are expanded on purpose (that is the point of the sanitiser)
         self.assertEqual(out, "Selesai. Port delapan ribu delapan puluh kosong.")
+
+
+class TestSplitSentences(unittest.TestCase):
+    def test_two_sentences_become_two_chunks(self):
+        self.assertEqual(
+            split_sentences("Selesai. Port delapan ribu kosong."),
+            ["Selesai.", "Port delapan ribu kosong."],
+        )
+
+    def test_no_empty_chunks(self):
+        self.assertEqual(split_sentences("  Satu.   Dua.  "), ["Satu.", "Dua."])
+        self.assertEqual(split_sentences(""), [])

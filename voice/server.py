@@ -17,6 +17,7 @@ throwaway synthesis are warmed at boot and the timings are logged.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -33,9 +34,9 @@ from aiohttp import web
 from faster_whisper import WhisperModel
 
 try:  # package import (tests, `python -m voice.server`)
-    from .normalise import normalise_for_speech
+    from .normalise import normalise_for_speech, split_sentences
 except ImportError:  # direct script run (`python voice/server.py`)
-    from normalise import normalise_for_speech
+    from normalise import normalise_for_speech, split_sentences
 
 HOST = os.environ.get("IRIS_VOICE_HOST", "127.0.0.1")
 PORT = int(os.environ.get("IRIS_VOICE_PORT", "3310"))
@@ -170,6 +171,11 @@ class Engines:
         spoken = normalise_for_speech(text)
         if not spoken:
             return b"", "", 0.0
+        audio, synth_ms = await self.synthesise(spoken)
+        return audio, spoken, synth_ms
+
+    async def synthesise(self, spoken: str) -> tuple[bytes, float]:
+        """Synthesise text that has ALREADY been normalised."""
         if not self.tts_warm:
             await self.warm()
         started = time.perf_counter()
@@ -179,7 +185,7 @@ class Engines:
         ).stream():
             if chunk["type"] == "audio":
                 buffer.extend(chunk["data"])
-        return bytes(buffer), spoken, (time.perf_counter() - started) * 1000
+        return bytes(buffer), (time.perf_counter() - started) * 1000
 
 
 engines = Engines()
@@ -222,6 +228,84 @@ async def transcribe(request: web.Request) -> web.Response:
 
     log.info("stt %.0f ms (%s, %.1f KB) -> %r", elapsed_ms, suffix, len(audio) / 1024, text[:80])
     return web.json_response({"text": text, "ms": round(elapsed_ms, 1)})
+
+
+async def speak_stream(request: web.Request) -> web.StreamResponse:
+    """Stream speech as newline-delimited JSON, one audio chunk per sentence.
+
+    Protocol (documented in voice/README.md):
+        {"type":"meta","spoken":"...","voice":"...","sentences":2}
+        {"type":"audio","index":0,"text":"...","ms":640,"audio":"<base64 mp3>"}
+        {"type":"error","index":1,"message":"..."}
+        {"type":"done","chunks":2,"total_ms":1450}
+    Each line ends with \\n. The first audio line is written as soon as
+    sentence 1 is synthesised; the first bytes leave before the last sentence
+    exists.
+    """
+    try:
+        payload = await request.json()
+    except json.JSONDecodeError:
+        return web.json_response({"error": "body must be JSON"}, status=400)
+
+    text = str(payload.get("text") or "").strip()
+    if not text:
+        return web.json_response({"error": "text is required"}, status=400)
+
+    started = time.perf_counter()
+    spoken = normalise_for_speech(text)
+    response = web.StreamResponse(status=200)
+    response.headers["Content-Type"] = "application/x-ndjson"
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Accel-Buffering"] = "no"
+    response.headers["X-Iris-Spoken-Text"] = _header_safe(spoken)
+    await response.prepare(request)
+
+    async def emit(payload_obj: dict) -> None:
+        await response.write((json.dumps(payload_obj, ensure_ascii=False) + "\n").encode("utf-8"))
+
+    try:
+        if not spoken:
+            log.info("tts stream: nothing speakable in %d chars", len(text))
+            await emit({"type": "done", "chunks": 0,
+                        "total_ms": round((time.perf_counter() - started) * 1000, 1)})
+            await response.write_eof()
+            return response
+
+        sentences = split_sentences(spoken) or [spoken]
+        await emit({
+            "type": "meta",
+            "spoken": spoken,
+            "voice": VOICE,
+            "sentences": len(sentences),
+        })
+
+        chunks = 0
+        for index, sentence in enumerate(sentences):
+            try:
+                audio, synth_ms = await engines.synthesise(sentence)
+            except Exception as exc:  # one bad chunk must not silence the rest
+                log.warning("tts stream chunk %d failed: %s", index, exc)
+                await emit({"type": "error", "index": index, "message": "speech engine failed"})
+                continue
+            await emit({
+                "type": "audio",
+                "index": index,
+                "text": sentence,
+                "ms": round(synth_ms, 1),
+                "audio": base64.b64encode(audio).decode("ascii"),
+            })
+            chunks += 1
+
+        total_ms = (time.perf_counter() - started) * 1000
+        await emit({"type": "done", "chunks": chunks, "total_ms": round(total_ms, 1)})
+        await response.write_eof()
+        log.info("tts stream %.0f ms for %d chars -> %d chunk(s) %r", total_ms, len(text), chunks, spoken[:80])
+        return response
+    except (ConnectionResetError, asyncio.CancelledError):
+        # Barge-in: the browser stopped reading. That is a normal cancellation,
+        # not a server error.
+        log.info("tts stream cancelled by the client")
+        return response
 
 
 async def speak(request: web.Request) -> web.Response:
@@ -269,6 +353,7 @@ def create_app() -> web.Application:
     app.router.add_get("/health", health)
     app.router.add_post("/transcribe", transcribe)
     app.router.add_post("/speak", speak)
+    app.router.add_post("/speak/stream", speak_stream)
     return app
 
 

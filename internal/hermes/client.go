@@ -15,6 +15,31 @@ import (
 	"time"
 )
 
+// Usage is the terminal five-counter payload. It is a pointer on Event: nil
+// means the gateway did not report usage at all, which must never be displayed
+// as "free".
+type Usage struct {
+	InputTokens      int64
+	OutputTokens     int64
+	TotalTokens      int64
+	CacheReadTokens  int64
+	CacheWriteTokens int64
+	// CacheReported is true when the payload named either cache counter. Some
+	// builds report only input/output/total; the missing cache counters read
+	// as 0, but the cost is then an upper bound, not an invoice.
+	CacheReported bool
+	// runtime is the nested copy some builds put inside usage. It is not part
+	// of the five counters; Event.Runtime exposes the resolved value.
+	runtime Runtime
+}
+
+// Runtime is the provider/model that actually served the turn. It can be
+// nested inside usage on some gateway builds, so both places are read.
+type Runtime struct {
+	Provider string
+	Model    string
+}
+
 // Event is a normalized Hermes SSE event. Unknown event kinds are preserved
 // with Kind == "unknown" and the original payload in Raw; they never abort a
 // turn.
@@ -31,6 +56,11 @@ type Event struct {
 	// come from the real stream clock, not from when irisd happened to read a line.
 	TS  float64
 	Raw []byte
+
+	// Metering. Usage is nil when the terminal payload carried no usage
+	// object; Runtime is empty when the payload named no provider/model.
+	Usage   *Usage
+	Runtime Runtime
 
 	// Approval fields. Hermes redacts the command before it leaves the gateway;
 	// irisd stores exactly what arrived and never logs it.
