@@ -32,8 +32,8 @@ type Event struct {
 
 // Client is the surface httpapi depends on. Tests use a fake implementation.
 type Client interface {
-	CreateSession(ctx context.Context, title string) (id string, err error)
-	StreamChat(ctx context.Context, sessionID, text string, onEvent func(Event) error) error
+	CreateSession(ctx context.Context, title, systemPrompt string) (id string, err error)
+	StreamChat(ctx context.Context, sessionID, text, instructions string, onEvent func(Event) error) error
 	DeleteSession(ctx context.Context, sessionID string) error
 }
 
@@ -100,9 +100,16 @@ func (c *APIClient) SetIdleTimeout(d time.Duration) {
 	}
 }
 
-// CreateSession creates a Hermes session and returns its stable id.
-func (c *APIClient) CreateSession(ctx context.Context, title string) (string, error) {
-	payload, err := json.Marshal(map[string]string{"title": title})
+// CreateSession creates a Hermes session and returns its stable id. The system
+// prompt is persisted for the record; this build does not apply a session's
+// stored system prompt to chat turns, so StreamChat also sends it as
+// instructions on every turn.
+func (c *APIClient) CreateSession(ctx context.Context, title, systemPrompt string) (string, error) {
+	fields := map[string]string{"title": title}
+	if strings.TrimSpace(systemPrompt) != "" {
+		fields["system_prompt"] = systemPrompt
+	}
+	payload, err := json.Marshal(fields)
 	if err != nil {
 		return "", fmt.Errorf("encode create session: %w", err)
 	}

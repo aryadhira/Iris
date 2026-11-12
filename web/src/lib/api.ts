@@ -1,4 +1,4 @@
-import type { Room, StoredMessage } from './types'
+import type { FileAttachment, Room, RoomFile, StoredMessage } from './types'
 
 export class ApiError extends Error {
   readonly status: number
@@ -96,13 +96,70 @@ export const api = {
    * Open the streaming turn. The caller owns the response body; a non-2xx here
    * means the user message was not accepted and nothing was stored.
    */
-  sendMessage(roomId: string, text: string, signal?: AbortSignal): Promise<Response> {
+  sendMessage(
+    roomId: string,
+    text: string,
+    attachmentIds: string[] = [],
+    signal?: AbortSignal,
+  ): Promise<Response> {
     return fetch(`/api/rooms/${encodeURIComponent(roomId)}/messages`, {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, attachmentIds }),
       signal,
+    })
+  },
+
+  async listRoomFiles(roomId: string): Promise<RoomFile[]> {
+    const body = await request<{ files: RoomFile[] }>(
+      `/api/rooms/${encodeURIComponent(roomId)}/files`,
+    )
+    return body.files ?? []
+  },
+
+  deleteFile(id: string): Promise<{ deleted: boolean }> {
+    return request(`/api/files/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  },
+
+  /**
+   * Upload one file. XMLHttpRequest is used only for its upload progress
+   * events; the endpoint streams and sniffs the bytes server-side.
+   */
+  uploadFile(
+    roomId: string,
+    file: File,
+    onProgress: (percent: number) => void = () => {},
+  ): Promise<FileAttachment> {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      xhr.open('POST', `/api/rooms/${encodeURIComponent(roomId)}/uploads`)
+      xhr.withCredentials = true
+      xhr.responseType = 'text'
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable && event.total > 0) {
+          onProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)))
+        }
+      }
+      xhr.onload = () => {
+        let body: { file?: FileAttachment; error?: string } = {}
+        try {
+          body = JSON.parse(xhr.responseText) as typeof body
+        } catch {
+          // not JSON; fall through to the status line
+        }
+        if (xhr.status >= 200 && xhr.status < 300 && body.file) {
+          onProgress(100)
+          resolve(body.file)
+          return
+        }
+        reject(new ApiError(body.error ?? `Iris menjawab dengan kode ${xhr.status}.`, xhr.status))
+      }
+      xhr.onerror = () =>
+        reject(new ApiError('Unggahan terputus. Periksa koneksi lalu coba lagi.', 0))
+      const form = new FormData()
+      form.append('file', file, file.name)
+      xhr.send(form)
     })
   },
 }

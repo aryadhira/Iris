@@ -13,6 +13,7 @@ const (
 	DefaultAddr          = "127.0.0.1:3300"
 	DefaultHermesURL     = "http://127.0.0.1:8642"
 	DefaultHermesKeyFile = "~/.config/iris-api-key"
+	DefaultDataDir       = "~/iris-data"
 )
 
 // Config is the complete runtime configuration. Secrets are held in memory only
@@ -25,6 +26,7 @@ type Config struct {
 	HermesKey     string
 	Passphrase    string
 	CookieSecure  bool
+	DataDir       string
 }
 
 // Load reads IRIS_* variables, validates them, and refuses clearly when a
@@ -50,6 +52,12 @@ func Load() (*Config, error) {
 	if cfg.Passphrase == "" {
 		return nil, errors.New("IRIS_PASSPHRASE is required; Iris refuses to start without an owner passphrase")
 	}
+
+	dataDir, err := ExpandHome(envOr("IRIS_DATA_DIR", DefaultDataDir))
+	if err != nil {
+		return nil, fmt.Errorf("IRIS_DATA_DIR is not a usable path: %w", err)
+	}
+	cfg.DataDir = dataDir
 
 	keyPath, err := ExpandHome(cfg.HermesKeyFile)
 	if err != nil {

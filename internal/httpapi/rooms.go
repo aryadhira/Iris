@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/labstack/echo/v4"
 
+	"github.com/aryadhira/iris/internal/rooms"
 	"github.com/aryadhira/iris/internal/store"
 )
 
@@ -39,15 +40,25 @@ func (s *Server) createRoom(c echo.Context) error {
 	roomID := uuid.New()
 	title := name + " · " + roomID.String()[:8]
 
+	// The room folder exists before Hermes is called, so the prompt can name the
+	// real absolute path.
+	folder, err := rooms.Create(s.dataDir, roomID)
+	if err != nil {
+		s.logger.Error("cannot create room folder", "error", err)
+		return c.JSON(http.StatusInternalServerError, errorBody("Iris tidak bisa menyiapkan folder room. Tidak ada room yang dibuat."))
+	}
+	prompt := folder.SystemPrompt()
+
 	// Hermes first: a room without a session is useless, and a failed session
 	// must not leave a row behind. The call is detached from the request so a
 	// phone that drops mid-create cannot strand an orphan session.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request().Context()), 15*time.Second)
-	sessionID, err := s.hermes.CreateSession(ctx, title)
+	sessionID, err := s.hermes.CreateSession(ctx, title, prompt)
 	cancel()
 	if err != nil {
+		_ = folder.Remove()
 		s.logger.Error("cannot create hermes session", "error", err)
-		return c.JSON(http.StatusBadGateway, errorBody("Hermes is not answering. No room was created."))
+		return c.JSON(http.StatusBadGateway, errorBody("Hermes tidak menjawab. Tidak ada room yang dibuat."))
 	}
 
 	row, err := s.store.CreateRoom(c.Request().Context(), store.CreateRoomParams{
@@ -55,15 +66,18 @@ func (s *Server) createRoom(c echo.Context) error {
 		Name:            name,
 		Topic:           topic,
 		HermesSessionID: sessionID,
+		FolderPath:      folder.Root,
+		SystemPrompt:    prompt,
 	})
 	if err != nil {
+		_ = folder.Remove()
 		s.logger.Error("cannot save room; cleaning up hermes session", "error", err, "hermes_session_id", sessionID)
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		if derr := s.hermes.DeleteSession(cleanupCtx, sessionID); derr != nil {
 			s.logger.Error("cannot clean up orphan hermes session", "error", derr, "hermes_session_id", sessionID)
 		}
 		cleanupCancel()
-		return c.JSON(http.StatusInternalServerError, errorBody("Iris could not save the room. Nothing was created."))
+		return c.JSON(http.StatusInternalServerError, errorBody("Iris tidak bisa menyimpan room. Tidak ada yang dibuat."))
 	}
 
 	return c.JSON(http.StatusCreated, map[string]any{"room": viewRoom(row)})
@@ -114,6 +128,40 @@ func (s *Server) archiveRoom(c echo.Context) error {
 		}
 		s.logger.Error("cannot archive room", "error", err)
 		return c.JSON(http.StatusInternalServerError, errorBody("Iris could not archive that room."))
+	}
+	return c.JSON(http.StatusOK, map[string]any{"room": viewRoom(row)})
+}
+
+type updatePromptRequest struct {
+	SystemPrompt string `json:"system_prompt"`
+}
+
+// updateRoomPrompt changes the contract prepended to every future turn. The
+// prompt is sent as per-turn instructions because this Hermes build ignores a
+// session's stored system_prompt during chat.
+func (s *Server) updateRoomPrompt(c echo.Context) error {
+	id, err := roomID(c)
+	if err != nil {
+		return err
+	}
+	var req updatePromptRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, errorBody("Kirim system_prompt sebagai teks."))
+	}
+	prompt := strings.TrimSpace(req.SystemPrompt)
+	if prompt == "" || len(prompt) > 8000 {
+		return c.JSON(http.StatusBadRequest, errorBody("Prompt room tidak boleh kosong atau lebih dari 8.000 karakter."))
+	}
+	row, err := s.store.UpdateRoomPrompt(c.Request().Context(), store.UpdateRoomPromptParams{
+		ID:           id,
+		SystemPrompt: prompt,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return c.JSON(http.StatusNotFound, errorBody("Room itu tidak ada."))
+		}
+		s.logger.Error("cannot update room prompt", "error", err)
+		return c.JSON(http.StatusInternalServerError, errorBody("Iris tidak bisa menyimpan prompt room ini."))
 	}
 	return c.JSON(http.StatusOK, map[string]any{"room": viewRoom(row)})
 }

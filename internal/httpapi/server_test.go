@@ -29,6 +29,8 @@ type fakeStore struct {
 
 	rooms    map[uuid.UUID]store.Room
 	messages []store.Message
+	files    map[uuid.UUID]store.File
+	order    []uuid.UUID
 	sessions map[string]store.AuthSession
 
 	createRoomCalls int
@@ -39,6 +41,7 @@ type fakeStore struct {
 func newFakeStore() *fakeStore {
 	return &fakeStore{
 		rooms:    map[uuid.UUID]store.Room{},
+		files:    map[uuid.UUID]store.File{},
 		sessions: map[string]store.AuthSession{},
 	}
 }
@@ -57,6 +60,8 @@ func (f *fakeStore) CreateRoom(_ context.Context, arg store.CreateRoomParams) (s
 		Topic:           arg.Topic,
 		HermesSessionID: arg.HermesSessionID,
 		CreatedAt:       time.Now(),
+		FolderPath:      arg.FolderPath,
+		SystemPrompt:    arg.SystemPrompt,
 	}
 	f.rooms[row.ID] = row
 	return row, nil
@@ -93,6 +98,90 @@ func (f *fakeStore) ArchiveRoom(_ context.Context, id uuid.UUID) (store.Room, er
 	row.ArchivedAt = &now
 	f.rooms[id] = row
 	return row, nil
+}
+
+func (f *fakeStore) UpdateRoomPrompt(_ context.Context, arg store.UpdateRoomPromptParams) (store.Room, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	row, ok := f.rooms[arg.ID]
+	if !ok {
+		return store.Room{}, pgx.ErrNoRows
+	}
+	row.SystemPrompt = arg.SystemPrompt
+	f.rooms[arg.ID] = row
+	return row, nil
+}
+
+func (f *fakeStore) InsertFile(_ context.Context, arg store.InsertFileParams) (store.File, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	row := store.File{
+		ID:        arg.ID,
+		RoomID:    arg.RoomID,
+		MessageID: arg.MessageID,
+		Source:    arg.Source,
+		Name:      arg.Name,
+		Path:      arg.Path,
+		Mime:      arg.Mime,
+		Size:      arg.Size,
+		Sha256:    arg.Sha256,
+		CreatedAt: time.Now(),
+	}
+	f.files[row.ID] = row
+	f.order = append([]uuid.UUID{row.ID}, f.order...)
+	return row, nil
+}
+
+func (f *fakeStore) GetFile(_ context.Context, id uuid.UUID) (store.File, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	row, ok := f.files[id]
+	if !ok {
+		return store.File{}, pgx.ErrNoRows
+	}
+	return row, nil
+}
+
+func (f *fakeStore) ListFiles(_ context.Context, roomID uuid.UUID) ([]store.File, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]store.File, 0)
+	for _, id := range f.order {
+		row := f.files[id]
+		if row.RoomID == roomID {
+			out = append(out, row)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) DeleteFile(_ context.Context, id uuid.UUID) (store.File, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	row, ok := f.files[id]
+	if !ok {
+		return store.File{}, pgx.ErrNoRows
+	}
+	delete(f.files, id)
+	for i, existing := range f.order {
+		if existing == id {
+			f.order = append(f.order[:i], f.order[i+1:]...)
+			break
+		}
+	}
+	return row, nil
+}
+
+func (f *fakeStore) AttachFileToMessage(_ context.Context, arg store.AttachFileToMessageParams) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	row, ok := f.files[arg.ID]
+	if !ok || row.RoomID != arg.RoomID || row.Source != "user" || row.MessageID != nil {
+		return 0, nil
+	}
+	row.MessageID = arg.MessageID
+	f.files[row.ID] = row
+	return 1, nil
 }
 
 func (f *fakeStore) InsertMessage(_ context.Context, arg store.InsertMessageParams) (store.Message, error) {
@@ -174,22 +263,26 @@ func (f *fakeStore) messagesFor(roomID uuid.UUID) []store.Message {
 type fakeHermes struct {
 	mu sync.Mutex
 
-	createID    string
-	createErr   error
-	createCalls int
+	createID     string
+	createErr    error
+	createCalls  int
+	createPrompt string
 
 	deleteCalls []string
 	deleteErr   error
 
-	events    []hermes.Event
-	streamErr error
-	onStream  func(ctx context.Context, emit func(hermes.Event) error) error
+	events       []hermes.Event
+	streamErr    error
+	lastText     string
+	instructions string
+	onStream     func(ctx context.Context, emit func(hermes.Event) error) error
 }
 
-func (f *fakeHermes) CreateSession(context.Context, string) (string, error) {
+func (f *fakeHermes) CreateSession(_ context.Context, _ string, systemPrompt string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.createCalls++
+	f.createPrompt = systemPrompt
 	if f.createErr != nil {
 		return "", f.createErr
 	}
@@ -203,7 +296,11 @@ func (f *fakeHermes) DeleteSession(_ context.Context, sessionID string) error {
 	return f.deleteErr
 }
 
-func (f *fakeHermes) StreamChat(ctx context.Context, _ string, _ string, onEvent func(hermes.Event) error) error {
+func (f *fakeHermes) StreamChat(ctx context.Context, _ string, text, instructions string, onEvent func(hermes.Event) error) error {
+	f.mu.Lock()
+	f.lastText = text
+	f.instructions = instructions
+	f.mu.Unlock()
 	if f.onStream != nil {
 		return f.onStream(ctx, onEvent)
 	}
@@ -225,6 +322,7 @@ func newTestApp(t *testing.T, st *fakeStore, hm hermes.Client) *echo.Echo {
 		Auth:    authService,
 		Logger:  logger,
 		Version: "test",
+		DataDir: t.TempDir(),
 	})
 }
 
@@ -428,7 +526,7 @@ func TestCreateRoomHermesFailureLeavesNoRow(t *testing.T) {
 	if len(st.rooms) != 0 || st.createRoomCalls != 0 {
 		t.Fatalf("row was written after Hermes failed: rooms=%d calls=%d", len(st.rooms), st.createRoomCalls)
 	}
-	if !strings.Contains(rec.Body.String(), "No room was created") {
+	if !strings.Contains(rec.Body.String(), "Tidak ada room") {
 		t.Fatalf("error copy is not human: %s", rec.Body.String())
 	}
 }

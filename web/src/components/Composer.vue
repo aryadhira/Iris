@@ -1,22 +1,36 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { PhLockSimple, PhPaperPlaneRight, PhStop } from '@phosphor-icons/vue'
+import { PhLockSimple, PhPaperclip, PhPaperPlaneRight, PhStop } from '@phosphor-icons/vue'
+import UploadChip from './UploadChip.vue'
+import type { PendingAttachment } from '../stores/attachments'
 
 const props = defineProps<{
   modelValue: string
   running: boolean
   archived: boolean
+  attachments: PendingAttachment[]
+  uploadBlock: string
 }>()
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
   send: []
+  files: [files: File[]]
+  remove: [key: string]
 }>()
 
 const textarea = ref<HTMLTextAreaElement | null>(null)
+const picker = ref<HTMLInputElement | null>(null)
 
+const hasReady = computed(() =>
+  props.attachments.some((item) => item.status === 'ready' && item.id),
+)
 const canSend = computed(
-  () => !props.running && !props.archived && props.modelValue.trim() !== '',
+  () =>
+    !props.running &&
+    !props.archived &&
+    props.uploadBlock === '' &&
+    (props.modelValue.trim() !== '' || hasReady.value),
 )
 
 const placeholder = computed(() => {
@@ -48,6 +62,32 @@ function onInput(event: Event): void {
   emit('update:modelValue', (event.target as HTMLTextAreaElement).value)
 }
 
+function openPicker(): void {
+  if (props.archived) return
+  picker.value?.click()
+}
+
+function onPicked(event: Event): void {
+  const input = event.target as HTMLInputElement
+  const files = input.files ? Array.from(input.files) : []
+  if (files.length > 0) emit('files', files)
+  input.value = ''
+}
+
+function onPaste(event: ClipboardEvent): void {
+  if (props.archived) return
+  const clipboard = event.clipboardData
+  if (!clipboard) return
+  const fromItems = Array.from(clipboard.items)
+    .filter((item) => item.kind === 'file')
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => file !== null)
+  const files = fromItems.length > 0 ? fromItems : Array.from(clipboard.files)
+  if (files.length === 0) return
+  event.preventDefault()
+  emit('files', files)
+}
+
 watch(
   () => props.modelValue,
   async () => {
@@ -72,6 +112,28 @@ onMounted(autosize)
       </p>
 
       <div
+        v-if="attachments.length > 0"
+        class="mb-2 flex gap-2 overflow-x-auto pb-0.5"
+        data-testid="pending-attachments"
+      >
+        <UploadChip
+          v-for="item in attachments"
+          :key="item.key"
+          :item="item"
+          class="shrink-0"
+          @remove="emit('remove', item.key)"
+        />
+      </div>
+
+      <p
+        v-if="uploadBlock"
+        class="mb-2 text-[11.5px] leading-snug text-quiet"
+        data-testid="upload-block"
+      >
+        {{ uploadBlock }}
+      </p>
+
+      <div
         class="rounded-2xl border border-line bg-surface transition-colors focus-within:border-orchid/60"
         :class="{ 'opacity-60': archived }"
       >
@@ -86,14 +148,38 @@ onMounted(autosize)
           class="block max-h-[168px] w-full resize-none bg-transparent px-4 pb-1 pt-3 text-[16px] leading-relaxed text-ink outline-none placeholder:text-quiet/80 disabled:cursor-not-allowed sm:text-[14px]"
           @input="onInput"
           @keydown="onKeydown"
+          @paste="onPaste"
+        />
+
+        <input
+          ref="picker"
+          type="file"
+          multiple
+          class="sr-only"
+          data-testid="file-input"
+          accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.txt,.md,.markdown,.csv,.json,.zip,image/*,application/pdf,text/plain,text/markdown,text/csv,application/json"
+          @change="onPicked"
         />
 
         <div class="flex items-center justify-between gap-2 px-2 pb-2 pt-1">
-          <span class="hidden pl-2 text-[11px] text-quiet sm:block">
-            Enter mengirim · Shift+Enter baris baru
-          </span>
+          <div class="flex min-w-0 items-center gap-1">
+            <button
+              type="button"
+              class="tap flex items-center justify-center rounded-xl text-muted hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+              :disabled="archived"
+              aria-label="Lampirkan file"
+              title="Lampirkan file"
+              data-testid="attach-button"
+              @click="openPicker"
+            >
+              <PhPaperclip :size="18" />
+            </button>
+            <span class="hidden truncate pl-1 text-[11px] text-quiet sm:block">
+              Enter mengirim · Shift+Enter baris baru
+            </span>
+          </div>
 
-          <div class="ml-auto flex items-center gap-1.5">
+          <div class="ml-auto flex shrink-0 items-center gap-1.5">
             <span
               v-if="running"
               class="inline-flex"

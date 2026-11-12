@@ -6,6 +6,22 @@ export interface Room {
   archived_at?: string | null
 }
 
+/** A file that belongs to a room, as irisd returns it. */
+export interface FileAttachment {
+  id: string
+  name: string
+  mime: string
+  size: number
+  sha256: string
+}
+
+export interface RoomFile extends FileAttachment {
+  room_id: string
+  message_id?: string | null
+  source: 'user' | 'agent'
+  created_at: string
+}
+
 /** A row exactly as irisd returns it. */
 export interface StoredMessage {
   id: string
@@ -13,6 +29,7 @@ export interface StoredMessage {
   role: string
   body: string
   run_id?: string | null
+  attachments?: FileAttachment[]
   created_at: string
 }
 
@@ -22,6 +39,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'system'
   body: string
   createdAt: string
+  attachments?: FileAttachment[]
   /** True for a message that exists only in this browser tab. */
   local?: boolean
   /** True when the connection died before the reply was confirmed complete. */

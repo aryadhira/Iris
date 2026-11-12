@@ -42,14 +42,26 @@ Hermes will **not** wake an API session when a background job finishes in this b
 ## Rooms
 
 A room is a row in irisd plus one Hermes session id. Rename/archive are ours; the conversation is
-Hermes'. Room history is stored by Hermes (sessions) and mirrored for search. Artifacts live in
-`rooms/<room-id>/files/`, never in Hermes' one-shot artifact store.
+Hermes'. Room history is stored by Hermes (sessions) and mirrored for search. Each room owns a folder at
+`$IRIS_DATA_DIR/rooms/<room-id>/` with `inbox/` (files Boss sends) and `outbox/` (files Hermes hands over).
+Every path is resolved through one guard: absolute paths, `..`, the room root itself and symlinks are
+refused, so one room cannot read another.
 
-## Artifacts
+## Files and artifacts
+
+Uploads stream into `inbox/<uuid>-<sanitised name>`; the MIME is sniffed from the bytes, never trusted from
+the client. `files` records source (`user`/`agent`), display name, relative path, MIME, size and sha256.
 
 `/v1/artifacts/*` is gated behind browser-control and its downloads are **one-shot** (second GET 404s).
-So Iris owns artifacts: the agent writes into the room folder, publishes via the office-style call, irisd
-records name/size/type/sha256 and serves a normal download. One link that works on a phone, forever.
+So Iris owns artifacts: the agent writes into `outbox/`, ends the turn with
+`[[artifact: outbox/<name>]]`, and irisd stores the row, strips the marker from the visible reply, and
+serves a normal download. One link that works on a phone, forever. A marker whose file is missing stays
+in the reply — a broken promise must remain visible.
+
+The room contract is six lines of Indonesian stored on the room. Measured on v0.21.6+636: a session's
+`system_prompt` is persisted by `POST /api/sessions` but is **not applied to `/chat/stream` turns**. irisd
+therefore sends the same text as per-turn `instructions`, which this build does apply; the session prompt
+is still stored for the record.
 
 ## Voice
 

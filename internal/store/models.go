@@ -17,6 +17,19 @@ type AuthSession struct {
 	UserAgent string
 }
 
+type File struct {
+	ID        uuid.UUID
+	RoomID    uuid.UUID
+	MessageID *uuid.UUID
+	Source    string
+	Name      string
+	Path      string
+	Mime      string
+	Size      int64
+	Sha256    string
+	CreatedAt time.Time
+}
+
 type Message struct {
 	ID        uuid.UUID
 	RoomID    uuid.UUID
@@ -33,4 +46,6 @@ type Room struct {
 	HermesSessionID string
 	CreatedAt       time.Time
 	ArchivedAt      *time.Time
+	FolderPath      string
+	SystemPrompt    string
 }

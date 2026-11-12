@@ -37,7 +37,7 @@ func TestStreamChatParsesNamedEventsAndUnknownKinds(t *testing.T) {
 
 	client := New(srv.URL, "test-key", testLogger())
 	var got []Event
-	err := client.StreamChat(context.Background(), "api_1", "hi", func(ev Event) error {
+	err := client.StreamChat(context.Background(), "api_1", "hi", "", func(ev Event) error {
 		got = append(got, ev)
 		return nil
 	})
@@ -84,7 +84,7 @@ func TestStreamChatIdleWatchdogFailsHonestly(t *testing.T) {
 	client.SetIdleTimeout(150 * time.Millisecond)
 
 	start := time.Now()
-	err := client.StreamChat(context.Background(), "api_1", "hi", func(Event) error { return nil })
+	err := client.StreamChat(context.Background(), "api_1", "hi", "", func(Event) error { return nil })
 	if !errors.Is(err, ErrIdle) {
 		t.Fatalf("error = %v, want ErrIdle", err)
 	}
@@ -114,7 +114,7 @@ func TestStreamChatIdleWatchdogIsNotFedByKeepalives(t *testing.T) {
 	client := New(srv.URL, "test-key", testLogger())
 	client.SetIdleTimeout(150 * time.Millisecond)
 
-	err := client.StreamChat(context.Background(), "api_1", "hi", func(Event) error { return nil })
+	err := client.StreamChat(context.Background(), "api_1", "hi", "", func(Event) error { return nil })
 	if !errors.Is(err, ErrIdle) {
 		t.Fatalf("error = %v, want ErrIdle even while keepalives arrive", err)
 	}
@@ -127,7 +127,7 @@ func TestStreamChatHTTPErrorIsTyped(t *testing.T) {
 	defer srv.Close()
 
 	client := New(srv.URL, "test-key", testLogger())
-	err := client.StreamChat(context.Background(), "api_1", "hi", func(Event) error { return nil })
+	err := client.StreamChat(context.Background(), "api_1", "hi", "", func(Event) error { return nil })
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusBadGateway {
 		t.Fatalf("error = %v, want APIError 502", err)

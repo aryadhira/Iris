@@ -1,15 +1,17 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { PhArrowLeft, PhList } from '@phosphor-icons/vue'
+import { PhArrowLeft, PhFiles, PhList } from '@phosphor-icons/vue'
 import BrandMark from '../components/BrandMark.vue'
 import Composer from '../components/Composer.vue'
+import FileLibrary from '../components/FileLibrary.vue'
 import FormattedText from '../components/FormattedText.vue'
 import MessageBubble from '../components/MessageBubble.vue'
 import WorkingLine from '../components/WorkingLine.vue'
 import { ApiError, api } from '../lib/api'
 import { humanizeServerError } from '../lib/errors'
 import type { Room, TurnPhase } from '../lib/types'
+import { createAttachmentStore, type AttachmentStore } from '../stores/attachments'
 import { createRoomStore, type RoomStore } from '../stores/room'
 import { markSignedOut } from '../stores/auth'
 import { forgetRoom, rememberRoom } from '../stores/rooms'
@@ -20,10 +22,17 @@ const router = useRouter()
 
 const room = ref<Room | null>(null)
 const store = ref<RoomStore | null>(null)
+const attachments = ref<AttachmentStore | null>(null)
+const libraryOpen = ref(false)
+const dragging = ref(false)
 const notFound = ref(false)
 const openError = ref('')
 
 const scroller = ref<HTMLDivElement | null>(null)
+// Content grows after paint: images decode and artifact cards mount late. Without this the newest card
+// ends up under the composer even though we scrolled on message change. Keep the view pinned only when the
+// reader is already at the bottom, so scrolling up is never fought.
+let contentObserver: ResizeObserver | null = null
 const nearBottom = ref(true)
 
 const messages = computed(() => store.value?.state.messages ?? [])
@@ -46,6 +55,8 @@ const draft = computed({
   },
 })
 const hasDraft = computed(() => draft.value.trim() !== '')
+const pendingAttachments = computed(() => attachments.value?.state.items ?? [])
+const uploadBlock = computed(() => attachments.value?.blockReason ?? '')
 
 function onScroll(): void {
   const element = scroller.value
@@ -62,6 +73,9 @@ function scrollToBottom(smooth = false): void {
 async function openRoom(id: string): Promise<void> {
   store.value?.dispose()
   store.value = null
+  attachments.value?.clear()
+  attachments.value = null
+  libraryOpen.value = false
   room.value = null
   notFound.value = false
   openError.value = ''
@@ -70,6 +84,10 @@ async function openRoom(id: string): Promise<void> {
     const found = await api.getRoom(id)
     room.value = found
     rememberRoom(found.id)
+    attachments.value = createAttachmentStore({
+      upload: (file, onProgress) => api.uploadFile(found.id, file, onProgress),
+      removeRemote: (id) => api.deleteFile(id),
+    })
     const created = createRoomStore(found.id, {}, { archived: Boolean(found.archived_at) })
     store.value = created
     await created.load()
@@ -96,18 +114,45 @@ async function openRoom(id: string): Promise<void> {
 
 function send(): void {
   const current = store.value
-  if (!current) return
+  if (!current || uploadBlock.value !== '') return
+  const ready = attachments.value?.ready ?? []
   nearBottom.value = true
-  void current.send(current.state.draft)
+  void current.send(current.state.draft, ready, () => attachments.value?.clearReady())
 }
 
 function retry(): void {
   const current = store.value
-  if (!current) return
+  if (!current || uploadBlock.value !== '') return
   const text = current.state.draft
-  if (text.trim() === '') return
+  const ready = attachments.value?.ready ?? []
+  if (text.trim() === '' && ready.length === 0) return
   nearBottom.value = true
-  void current.send(text)
+  void current.send(text, ready, () => attachments.value?.clearReady())
+}
+
+function addFiles(files: File[]): void {
+  if (!attachments.value || archived.value) return
+  for (const file of files) void attachments.value.add(file)
+}
+
+function onDrop(event: DragEvent): void {
+  dragging.value = false
+  const files = event.dataTransfer?.files
+  if (!files || files.length === 0) return
+  addFiles(Array.from(files))
+}
+
+function onDragLeave(event: DragEvent): void {
+  const next = event.relatedTarget as Node | null
+  if (!next || !(event.currentTarget as Node).contains(next)) dragging.value = false
+}
+
+function removeAttachment(key: string): void {
+  attachments.value?.remove(key)
+}
+
+function onFilesChanged(): void {
+  void store.value?.reload()
 }
 
 function reloadRoom(): void {
@@ -142,13 +187,42 @@ watch(phase, async (value) => {
   }
 })
 
+onMounted(async () => {
+  await nextTick()
+  const target = scroller.value?.firstElementChild
+  if (target && typeof ResizeObserver !== 'undefined') {
+    contentObserver = new ResizeObserver(() => {
+      if (nearBottom.value) scrollToBottom()
+    })
+    contentObserver.observe(target)
+  }
+})
+
 onBeforeUnmount(() => {
+  contentObserver?.disconnect()
+  contentObserver = null
   store.value?.dispose()
 })
 </script>
 
 <template>
-  <div class="flex h-full min-h-0 flex-col">
+  <div
+    class="relative flex h-full min-h-0 flex-col"
+    @dragenter.prevent="dragging = true"
+    @dragover.prevent
+    @dragleave="onDragLeave"
+    @drop.prevent="onDrop"
+  >
+    <div
+      v-if="dragging"
+      class="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-bg-deep/80 p-6 backdrop-blur-sm"
+      data-testid="drop-overlay"
+    >
+      <p class="rounded-2xl border border-dashed border-orchid/60 px-6 py-8 text-center text-[13px] text-ink">
+        Lepaskan file di sini untuk mengirim ke Hermes.
+      </p>
+    </div>
+
     <header
       class="flex items-center gap-2 border-b border-line px-3 pb-2 pt-[max(0.5rem,env(safe-area-inset-top))] lg:px-6 lg:py-3.5"
       data-testid="room-header"
@@ -164,8 +238,8 @@ onBeforeUnmount(() => {
       </button>
 
       <div class="mx-auto flex min-w-0 w-full max-w-3xl items-center gap-2 px-1 lg:px-8">
-        <div class="flex min-w-0 items-center gap-2">
-          <h1 class="truncate text-[15px] font-semibold tracking-tight text-ink lg:text-[17px]">
+        <div class="flex min-w-0 shrink-0 items-center gap-2">
+          <h1 class="max-w-[42vw] truncate text-[15px] font-semibold tracking-tight text-ink lg:max-w-none lg:text-[17px]">
             {{ room?.name ?? (notFound ? 'Room tidak ada' : 'Memuat room…') }}
           </h1>
           <span
@@ -175,9 +249,19 @@ onBeforeUnmount(() => {
             Diarsipkan
           </span>
         </div>
-        <p class="truncate text-[11.5px] text-quiet">
+        <p class="min-w-0 flex-1 truncate text-[11.5px] text-quiet">
           {{ room?.topic || (room ? 'Tanpa topik' : '') }}
         </p>
+        <button
+          type="button"
+          class="tap flex shrink-0 items-center justify-center gap-1.5 rounded-xl border border-line px-2 text-[12px] text-muted hover:border-orchid/40 hover:text-ink sm:px-3"
+          aria-label="Buka semua file room ini"
+          data-testid="open-files"
+          @click="libraryOpen = true"
+        >
+          <PhFiles :size="17" />
+          <span class="hidden sm:inline">File</span>
+        </button>
       </div>
     </header>
 
@@ -329,11 +413,22 @@ onBeforeUnmount(() => {
       v-model="draft"
       :running="isWorking"
       :archived="archived"
+      :attachments="pendingAttachments"
+      :upload-block="uploadBlock"
       @send="send"
+      @files="addFiles"
+      @remove="removeAttachment"
     />
 
     <div v-else-if="room" class="border-t border-line px-4 py-3">
       <p class="text-center text-[12px] text-quiet">Menyiapkan composer…</p>
     </div>
+
+    <FileLibrary
+      :open="libraryOpen"
+      :room-id="room?.id ?? ''"
+      @close="libraryOpen = false"
+      @changed="onFilesChanged"
+    />
   </div>
 </template>

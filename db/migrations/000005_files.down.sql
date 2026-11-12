@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS files;
+ALTER TABLE rooms DROP COLUMN IF EXISTS system_prompt;
+ALTER TABLE rooms DROP COLUMN IF EXISTS folder_path;

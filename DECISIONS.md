@@ -53,8 +53,9 @@ be relaxed and the pump kept as a safety net.
 **Status:** accepted (2026-11-05)
 
 Hermes' artifact endpoints are gated and one-shot. Files belong to a room and must be downloadable more
-than once, on a phone. irisd stores bytes under `rooms/<room-id>/files/`, records sha256/size/mime, and
-serves them itself. The agent only writes the file and calls publish; it never hands us a URL.
+than once, on a phone. irisd stores bytes under `$IRIS_DATA_DIR/rooms/<room-id>/` (`inbox/` for uploads,
+`outbox/` for deliverables), records sha256/size/mime, and serves them itself. The agent writes the file
+and ends its reply with `[[artifact: outbox/<name>]]`; it never hands us a URL.
 
 ## ADR-005 — Voice: push-to-talk, summary speech, free engines
 
@@ -63,3 +64,25 @@ serves them itself. The agent only writes the file and calls publish; it never h
 Push-to-talk first (open-mic has too many edge cases). Speech out is edge-tts, Indonesian female, `-8%`,
 and speaks a **summary** — markdown stripped, code and tables dropped, at most two sentences, full text on
 screen. Realtime voice (WebRTC, paid) is explicitly out of scope for v1.
+
+## ADR-006 — Room files: inbox/outbox, per-turn instructions
+
+**Status:** accepted (2026-11-12)
+
+**Context.** P2 needs files both ways: Boss uploads into a room, Hermes hands artifacts back. The plan was
+to set a room folder and artifact contract once as the Hermes session's `system_prompt`. Measured on
+build v0.21.6+636: `POST /api/sessions` accepts and persists `system_prompt` (`has_system_prompt: true`),
+but `/api/sessions/{id}/chat/stream` ignores it; a throwaway session wrote to `~/outbox` instead of the
+room folder. `PATCH /api/sessions/{id}` also refuses `system_prompt`. The same build **does** apply a
+per-request `instructions` field as the ephemeral system prompt — measured: the next probe wrote exactly
+into the room's `outbox/` and ended with the marker.
+
+**Decision.** Each room owns `$IRIS_DATA_DIR/rooms/<room-id>/{inbox,outbox}` and stores a short Indonesian
+contract on the room row. irisd sends that text as per-turn `instructions` (and still records it as the
+session's `system_prompt`). Markers `[[artifact: outbox/<name>]]` are parsed from the assembled reply,
+resolved through the room path guard, stored in `files` with sha256, and stripped from the visible body.
+Broken markers stay visible.
+
+**Consequences.** The contract costs ~100 tokens per turn. It is editable without recreating the Hermes
+session (the prompt is ours, not the session's). Existing P1 rooms have an empty folder path and need a
+backfill or recreation before they can carry files.

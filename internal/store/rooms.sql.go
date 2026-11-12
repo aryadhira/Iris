@@ -15,7 +15,7 @@ const archiveRoom = `-- name: ArchiveRoom :one
 UPDATE rooms
 SET archived_at = now()
 WHERE id = $1
-RETURNING id, name, topic, hermes_session_id, created_at, archived_at
+RETURNING id, name, topic, hermes_session_id, created_at, archived_at, folder_path, system_prompt
 `
 
 func (q *Queries) ArchiveRoom(ctx context.Context, id uuid.UUID) (Room, error) {
@@ -28,14 +28,16 @@ func (q *Queries) ArchiveRoom(ctx context.Context, id uuid.UUID) (Room, error) {
 		&i.HermesSessionID,
 		&i.CreatedAt,
 		&i.ArchivedAt,
+		&i.FolderPath,
+		&i.SystemPrompt,
 	)
 	return i, err
 }
 
 const createRoom = `-- name: CreateRoom :one
-INSERT INTO rooms (id, name, topic, hermes_session_id)
-VALUES ($1, $2, $3, $4)
-RETURNING id, name, topic, hermes_session_id, created_at, archived_at
+INSERT INTO rooms (id, name, topic, hermes_session_id, folder_path, system_prompt)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, name, topic, hermes_session_id, created_at, archived_at, folder_path, system_prompt
 `
 
 type CreateRoomParams struct {
@@ -43,6 +45,8 @@ type CreateRoomParams struct {
 	Name            string
 	Topic           string
 	HermesSessionID string
+	FolderPath      string
+	SystemPrompt    string
 }
 
 func (q *Queries) CreateRoom(ctx context.Context, arg CreateRoomParams) (Room, error) {
@@ -51,6 +55,8 @@ func (q *Queries) CreateRoom(ctx context.Context, arg CreateRoomParams) (Room, e
 		arg.Name,
 		arg.Topic,
 		arg.HermesSessionID,
+		arg.FolderPath,
+		arg.SystemPrompt,
 	)
 	var i Room
 	err := row.Scan(
@@ -60,12 +66,14 @@ func (q *Queries) CreateRoom(ctx context.Context, arg CreateRoomParams) (Room, e
 		&i.HermesSessionID,
 		&i.CreatedAt,
 		&i.ArchivedAt,
+		&i.FolderPath,
+		&i.SystemPrompt,
 	)
 	return i, err
 }
 
 const getRoom = `-- name: GetRoom :one
-SELECT id, name, topic, hermes_session_id, created_at, archived_at FROM rooms
+SELECT id, name, topic, hermes_session_id, created_at, archived_at, folder_path, system_prompt FROM rooms
 WHERE id = $1
 `
 
@@ -79,12 +87,14 @@ func (q *Queries) GetRoom(ctx context.Context, id uuid.UUID) (Room, error) {
 		&i.HermesSessionID,
 		&i.CreatedAt,
 		&i.ArchivedAt,
+		&i.FolderPath,
+		&i.SystemPrompt,
 	)
 	return i, err
 }
 
 const listRooms = `-- name: ListRooms :many
-SELECT id, name, topic, hermes_session_id, created_at, archived_at FROM rooms
+SELECT id, name, topic, hermes_session_id, created_at, archived_at, folder_path, system_prompt FROM rooms
 WHERE archived_at IS NULL
 ORDER BY created_at DESC, id DESC
 `
@@ -105,6 +115,8 @@ func (q *Queries) ListRooms(ctx context.Context) ([]Room, error) {
 			&i.HermesSessionID,
 			&i.CreatedAt,
 			&i.ArchivedAt,
+			&i.FolderPath,
+			&i.SystemPrompt,
 		); err != nil {
 			return nil, err
 		}
@@ -114,4 +126,32 @@ func (q *Queries) ListRooms(ctx context.Context) ([]Room, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateRoomPrompt = `-- name: UpdateRoomPrompt :one
+UPDATE rooms
+SET system_prompt = $2
+WHERE id = $1
+RETURNING id, name, topic, hermes_session_id, created_at, archived_at, folder_path, system_prompt
+`
+
+type UpdateRoomPromptParams struct {
+	ID           uuid.UUID
+	SystemPrompt string
+}
+
+func (q *Queries) UpdateRoomPrompt(ctx context.Context, arg UpdateRoomPromptParams) (Room, error) {
+	row := q.db.QueryRow(ctx, updateRoomPrompt, arg.ID, arg.SystemPrompt)
+	var i Room
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Topic,
+		&i.HermesSessionID,
+		&i.CreatedAt,
+		&i.ArchivedAt,
+		&i.FolderPath,
+		&i.SystemPrompt,
+	)
+	return i, err
 }

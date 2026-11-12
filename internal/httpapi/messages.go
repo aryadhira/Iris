@@ -2,10 +2,15 @@ package httpapi
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"path"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -15,7 +20,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/labstack/echo/v4"
 
+	"github.com/aryadhira/iris/internal/artifacts"
+	"github.com/aryadhira/iris/internal/files"
 	"github.com/aryadhira/iris/internal/hermes"
+	"github.com/aryadhira/iris/internal/rooms"
 	"github.com/aryadhira/iris/internal/store"
 )
 
@@ -69,15 +77,23 @@ func (s *Server) listMessages(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, errorBody("Iris could not load this room's messages."))
 	}
 
+	fileRows, err := s.store.ListFiles(c.Request().Context(), id)
+	if err != nil {
+		s.logger.Error("cannot list files for messages", "error", err)
+		return c.JSON(http.StatusInternalServerError, errorBody("Iris tidak bisa memuat lampiran room ini."))
+	}
+	byMessage := attachmentsByMessage(fileRows)
+
 	messages := make([]messageView, 0, len(rows))
 	for _, row := range rows {
-		messages = append(messages, viewMessage(row))
+		messages = append(messages, viewMessage(row, byMessage[row.ID]))
 	}
 	return c.JSON(http.StatusOK, map[string]any{"messages": messages})
 }
 
 type sendMessageRequest struct {
-	Text string `json:"text"`
+	Text          string   `json:"text"`
+	AttachmentIDs []string `json:"attachmentIds"`
 }
 
 // streamMessage persists the user message, streams the Hermes turn to the
@@ -93,8 +109,15 @@ func (s *Server) streamMessage(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, errorBody("Write a message first."))
 	}
 	text := strings.TrimSpace(req.Text)
-	if text == "" {
-		return c.JSON(http.StatusBadRequest, errorBody("Write a message first."))
+	attachmentIDs, err := parseAttachmentIDs(req.AttachmentIDs)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, errorBody("Lampiran itu tidak valid."))
+	}
+	if text == "" && len(attachmentIDs) == 0 {
+		return c.JSON(http.StatusBadRequest, errorBody("Tulis pesan atau lampirkan file dulu."))
+	}
+	if len(attachmentIDs) > maxAttachmentsPerMessage {
+		return c.JSON(http.StatusBadRequest, errorBody("Maksimal 10 lampiran per pesan."))
 	}
 
 	room, err := s.store.GetRoom(c.Request().Context(), id)
@@ -106,14 +129,42 @@ func (s *Server) streamMessage(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, errorBody("Iris could not open that room."))
 	}
 
-	if _, err := s.store.InsertMessage(c.Request().Context(), store.InsertMessageParams{
+	attachments, err := s.loadAttachments(c.Request().Context(), room.ID, attachmentIDs)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, errorBody("Lampiran itu tidak ada di room ini."))
+	}
+
+	userMessage, err := s.store.InsertMessage(c.Request().Context(), store.InsertMessageParams{
 		ID:     uuid.New(),
 		RoomID: room.ID,
 		Role:   "user",
 		Body:   text,
-	}); err != nil {
+	})
+	if err != nil {
 		s.logger.Error("cannot save user message", "error", err)
-		return c.JSON(http.StatusInternalServerError, errorBody("Iris could not save your message. Nothing was sent."))
+		return c.JSON(http.StatusInternalServerError, errorBody("Iris tidak bisa menyimpan pesanmu. Tidak ada yang terkirim."))
+	}
+	for _, f := range attachments {
+		if _, err := s.store.AttachFileToMessage(c.Request().Context(), store.AttachFileToMessageParams{
+			MessageID: &userMessage.ID,
+			ID:        f.ID,
+			RoomID:    room.ID,
+		}); err != nil {
+			s.logger.Error("cannot attach file to message", "error", err, "file_id", f.ID.String())
+		}
+	}
+
+	promptText := text
+	if len(attachments) > 0 {
+		lines := make([]string, 0, len(attachments))
+		for _, f := range attachments {
+			lines = append(lines, fmt.Sprintf("Lampiran: %s (%s, %s)", f.Path, files.HumanType(f.Mime, f.Name), files.FormatSize(f.Size)))
+		}
+		if promptText == "" {
+			promptText = strings.Join(lines, "\n") + "\n\nBoss mengirim lampiran tanpa pesan."
+		} else {
+			promptText = strings.Join(lines, "\n") + "\n\n" + promptText
+		}
 	}
 
 	headers := c.Response().Header()
@@ -163,7 +214,7 @@ func (s *Server) streamMessage(c echo.Context) error {
 		runID     string
 	)
 
-	streamErr := s.hermes.StreamChat(turnCtx, room.HermesSessionID, text, func(ev hermes.Event) error {
+	streamErr := s.hermes.StreamChat(turnCtx, room.HermesSessionID, promptText, room.SystemPrompt, func(ev hermes.Event) error {
 		if ev.RunID != "" {
 			runID = ev.RunID
 		}
@@ -201,19 +252,46 @@ func (s *Server) streamMessage(c echo.Context) error {
 		return nil
 	})
 
-	body := assistant.String()
-	if body == "" && finalText != "" {
-		body = finalText
+	rawBody := assistant.String()
+	if rawBody == "" && finalText != "" {
+		rawBody = finalText
+	}
+
+	// The promise markers belong to irisd, not to the bubble. Strip the ones
+	// whose file really exists; a broken promise stays in the body, visibly.
+	cleanedBody := rawBody
+	var found []artifacts.Found
+	if rawBody != "" {
+		folder := rooms.Open(room.FolderPath)
+		result := artifacts.Process(rawBody, func(rel string) (string, error) {
+			abs, err := folder.Resolve(rel)
+			if err != nil {
+				return "", err
+			}
+			info, err := os.Stat(abs)
+			if err != nil {
+				return "", err
+			}
+			if !info.Mode().IsRegular() {
+				return "", errors.New("not a regular file")
+			}
+			return abs, nil
+		})
+		cleanedBody = result.Body
+		found = result.Files
+		for _, broken := range result.Broken {
+			s.logger.Warn("artifact promised but not found", "room_id", room.ID.String(), "path", broken)
+		}
 	}
 
 	var saved *store.Message
-	if body != "" {
+	if rawBody != "" {
 		persistCtx, cancel := context.WithTimeout(context.Background(), persistTimeout)
 		row, err := s.store.InsertMessage(persistCtx, store.InsertMessageParams{
 			ID:     uuid.New(),
 			RoomID: room.ID,
 			Role:   "assistant",
-			Body:   body,
+			Body:   cleanedBody,
 			RunID:  optionalString(runID),
 		})
 		cancel()
@@ -221,6 +299,9 @@ func (s *Server) streamMessage(c echo.Context) error {
 			s.logger.Error("cannot save assistant message", "error", err, "room_id", room.ID.String())
 		} else {
 			saved = &row
+			for _, item := range found {
+				s.saveArtifact(room, row.ID, item)
+			}
 		}
 	}
 
@@ -243,6 +324,91 @@ func (s *Server) streamMessage(c echo.Context) error {
 		send("done", map[string]string{"messageId": ""})
 	}
 	return nil
+}
+
+const maxAttachmentsPerMessage = 10
+
+func parseAttachmentIDs(raw []string) ([]uuid.UUID, error) {
+	seen := make(map[uuid.UUID]struct{}, len(raw))
+	out := make([]uuid.UUID, 0, len(raw))
+	for _, value := range raw {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		id, err := uuid.Parse(trimmed)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out, nil
+}
+
+func (s *Server) loadAttachments(ctx context.Context, roomID uuid.UUID, ids []uuid.UUID) ([]store.File, error) {
+	out := make([]store.File, 0, len(ids))
+	for _, id := range ids {
+		row, err := s.store.GetFile(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if row.RoomID != roomID || row.Source != "user" || row.MessageID != nil {
+			return nil, errors.New("attachment is not available in this room")
+		}
+		out = append(out, row)
+	}
+	return out, nil
+}
+
+func (s *Server) saveArtifact(room store.Room, messageID uuid.UUID, item artifacts.Found) {
+	info, err := os.Stat(item.Abs)
+	if err != nil {
+		s.logger.Warn("artifact vanished before it could be stored", "path", item.Path, "error", err)
+		return
+	}
+	mimeType, err := files.DetectFile(item.Abs, path.Base(item.Path))
+	if err != nil {
+		s.logger.Warn("cannot identify artifact", "path", item.Path, "error", err)
+		return
+	}
+	sum, err := hashFile(item.Abs)
+	if err != nil {
+		s.logger.Warn("cannot hash artifact", "path", item.Path, "error", err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), persistTimeout)
+	defer cancel()
+	_, err = s.store.InsertFile(ctx, store.InsertFileParams{
+		ID:        uuid.New(),
+		RoomID:    room.ID,
+		MessageID: &messageID,
+		Source:    "agent",
+		Name:      path.Base(item.Path),
+		Path:      item.Path,
+		Mime:      mimeType,
+		Size:      info.Size(),
+		Sha256:    sum,
+	})
+	if err != nil {
+		s.logger.Error("cannot save artifact row", "error", err, "path", item.Path)
+	}
+}
+
+func hashFile(filePath string) (string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 func optionalString(v string) *string {

@@ -21,12 +21,16 @@ type sseLine struct {
 // StreamChat posts text into an existing Hermes session and parses the SSE
 // response. The request is not bounded by an overall deadline; the idle
 // watchdog fails honestly if Hermes sends nothing for c.idleTimeout.
-func (c *APIClient) StreamChat(ctx context.Context, sessionID, text string, onEvent func(Event) error) error {
+func (c *APIClient) StreamChat(ctx context.Context, sessionID, text, instructions string, onEvent func(Event) error) error {
 	if onEvent == nil {
 		onEvent = func(Event) error { return nil }
 	}
 
-	payload, err := json.Marshal(map[string]string{"message": text})
+	body := map[string]string{"message": text}
+	if strings.TrimSpace(instructions) != "" {
+		body["instructions"] = instructions
+	}
+	payload, err := json.Marshal(body)
 	if err != nil {
 		return fmt.Errorf("encode chat message: %w", err)
 	}

@@ -1,0 +1,209 @@
+{
+  "startedAt": "2026-11-12T00:17:55.586Z",
+  "viewports": {
+    "phone": {
+      "width": 390,
+      "height": 844,
+      "roomPath": "/r/ff70ee88-3609-4b99-a371-37cae342aeb8",
+      "artifact": "hasil-5cb586.md",
+      "artifactBytes": 16,
+      "agentBytes": 16
+    },
+    "desktop": {
+      "width": 1440,
+      "height": 900,
+      "roomPath": "/r/3ad5de7c-8152-4131-8531-29b7208ec840",
+      "artifact": "hasil-6d25f2.md",
+      "artifactBytes": 16,
+      "agentBytes": 16
+    }
+  },
+  "checks": [
+    {
+      "scope": "phone",
+      "name": "login reaches the rooms list",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "scope": "phone",
+      "name": "room created through the UI",
+      "pass": true,
+      "detail": "/r/ff70ee88-3609-4b99-a371-37cae342aeb8"
+    },
+    {
+      "scope": "phone",
+      "name": "upload chip names the file and reaches ready",
+      "pass": true,
+      "detail": "\"iris-p2-5cb586.png PNG · 3,5 KB · siap\""
+    },
+    {
+      "scope": "phone",
+      "name": "sent image renders as a thumbnail",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "scope": "phone",
+      "name": "thumbnail opens a lightbox showing the image",
+      "pass": true,
+      "detail": "/api/files/6fa0fd9a-6b20-4e80-afe3-59d66f888d06 naturalWidth=320"
+    },
+    {
+      "scope": "phone",
+      "name": "PNG download is inline, nosniff, and byte-identical",
+      "pass": true,
+      "detail": "3565 bytes vs 3565"
+    },
+    {
+      "scope": "phone",
+      "name": "the image turn completed",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "scope": "phone",
+      "name": "artifact card appears under the reply",
+      "pass": true,
+      "detail": "\"hasil-5cb586.md Teks · 16 B Unduh hasil-5cb586.md\""
+    },
+    {
+      "scope": "phone",
+      "name": "the marker is not left in the stored reply",
+      "pass": true,
+      "detail": "\"Hermes · 07.19 Sudah dibuat, Boss: hasil-5cb586.md di folder outbox berisi tepat satu baris \\\"artifac\""
+    },
+    {
+      "scope": "phone",
+      "name": "artifact download is byte-identical to what the agent wrote",
+      "pass": true,
+      "detail": "16 bytes vs 16 on disk (hasil-5cb586.md)"
+    },
+    {
+      "scope": "phone",
+      "name": "markdown download is an attachment with nosniff",
+      "pass": true,
+      "detail": "text/markdown · attachment; filename=hasil-5cb586.md"
+    },
+    {
+      "scope": "phone",
+      "name": "library lists both \"Kamu kirim\" and \"Hermes kirim\"",
+      "pass": true,
+      "detail": "2 files"
+    },
+    {
+      "scope": "phone",
+      "name": "delete asks for a second step",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "scope": "phone",
+      "name": "room with files has no horizontal overflow",
+      "pass": true,
+      "detail": "scrollWidth=390 innerWidth=390"
+    },
+    {
+      "scope": "desktop",
+      "name": "login reaches the rooms list",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "scope": "desktop",
+      "name": "room created through the UI",
+      "pass": true,
+      "detail": "/r/3ad5de7c-8152-4131-8531-29b7208ec840"
+    },
+    {
+      "scope": "desktop",
+      "name": "upload chip names the file and reaches ready",
+      "pass": true,
+      "detail": "\"iris-p2-6d25f2.png PNG · 3,5 KB · siap\""
+    },
+    {
+      "scope": "desktop",
+      "name": "sent image renders as a thumbnail",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "scope": "desktop",
+      "name": "thumbnail opens a lightbox showing the image",
+      "pass": true,
+      "detail": "/api/files/758a51a2-b6f6-4aeb-a937-1564288dd088 naturalWidth=320"
+    },
+    {
+      "scope": "desktop",
+      "name": "PNG download is inline, nosniff, and byte-identical",
+      "pass": true,
+      "detail": "3565 bytes vs 3565"
+    },
+    {
+      "scope": "desktop",
+      "name": "the image turn completed",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "scope": "desktop",
+      "name": "artifact card appears under the reply",
+      "pass": true,
+      "detail": "\"hasil-6d25f2.md Teks · 16 B Unduh hasil-6d25f2.md\""
+    },
+    {
+      "scope": "desktop",
+      "name": "the marker is not left in the stored reply",
+      "pass": true,
+      "detail": "\"Hermes · 07.19 Sudah kubuat, Boss — hasil-6d25f2.md di outbox berisi tepat satu baris itu. hasil-6d2\""
+    },
+    {
+      "scope": "desktop",
+      "name": "artifact download is byte-identical to what the agent wrote",
+      "pass": true,
+      "detail": "16 bytes vs 16 on disk (hasil-6d25f2.md)"
+    },
+    {
+      "scope": "desktop",
+      "name": "markdown download is an attachment with nosniff",
+      "pass": true,
+      "detail": "text/markdown · attachment; filename=hasil-6d25f2.md"
+    },
+    {
+      "scope": "desktop",
+      "name": "library lists both \"Kamu kirim\" and \"Hermes kirim\"",
+      "pass": true,
+      "detail": "2 files"
+    },
+    {
+      "scope": "desktop",
+      "name": "delete asks for a second step",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "scope": "desktop",
+      "name": "room with files has no horizontal overflow",
+      "pass": true,
+      "detail": "scrollWidth=1440 innerWidth=1440"
+    },
+    {
+      "scope": "browser",
+      "name": "no unexpected console errors",
+      "pass": true,
+      "detail": "2 expected 401 probe(s) before login"
+    }
+  ],
+  "finishedAt": "2026-11-12T00:19:59.057Z",
+  "failed": [],
+  "screenshots": [
+    "/home/aryadhira/Documents/projects/iris/changelogs/assets/p2-phone-upload.png",
+    "/home/aryadhira/Documents/projects/iris/changelogs/assets/p2-phone-image.png",
+    "/home/aryadhira/Documents/projects/iris/changelogs/assets/p2-phone-artifact.png",
+    "/home/aryadhira/Documents/projects/iris/changelogs/assets/p2-phone-library.png",
+    "/home/aryadhira/Documents/projects/iris/changelogs/assets/p2-desktop-upload.png",
+    "/home/aryadhira/Documents/projects/iris/changelogs/assets/p2-desktop-image.png",
+    "/home/aryadhira/Documents/projects/iris/changelogs/assets/p2-desktop-artifact.png",
+    "/home/aryadhira/Documents/projects/iris/changelogs/assets/p2-desktop-library.png"
+  ]
+}

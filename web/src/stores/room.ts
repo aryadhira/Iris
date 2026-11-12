@@ -3,13 +3,18 @@ import { api } from '../lib/api'
 import { humanizeServerError } from '../lib/errors'
 import { mergeStored } from '../lib/merge'
 import { frameJson, SseParser, type SseFrame } from '../lib/sse'
-import type { ChatMessage, StoredMessage, TurnPhase } from '../lib/types'
+import type { ChatMessage, FileAttachment, StoredMessage, TurnPhase } from '../lib/types'
 
 const PAGE_SIZE = 200
 
 export interface RoomStoreDeps {
   listMessages: (roomId: string, before?: string) => Promise<StoredMessage[]>
-  sendMessage: (roomId: string, text: string, signal: AbortSignal) => Promise<Response>
+  sendMessage: (
+    roomId: string,
+    text: string,
+    attachmentIds: string[],
+    signal: AbortSignal,
+  ) => Promise<Response>
   sleep: (ms: number) => Promise<void>
   reconnectDelays: number[]
   now: () => number
@@ -17,7 +22,8 @@ export interface RoomStoreDeps {
 
 export const liveDeps: RoomStoreDeps = {
   listMessages: (roomId, before) => api.listMessages(roomId, { before, limit: PAGE_SIZE }),
-  sendMessage: (roomId, text, signal) => api.sendMessage(roomId, text, signal),
+  sendMessage: (roomId, text, attachmentIds, signal) =>
+    api.sendMessage(roomId, text, attachmentIds, signal),
   sleep: (ms) => new Promise((resolve) => window.setTimeout(resolve, ms)),
   // Roughly 35 s of patience: long enough for a stored reply, short enough
   // that the screen stops claiming to retry while nothing is happening.
@@ -122,9 +128,13 @@ export function createRoomStore(
     }
   }
 
-  async function send(text: string): Promise<void> {
+  async function send(
+    text: string,
+    attachments: FileAttachment[] = [],
+    onAccepted?: () => void,
+  ): Promise<void> {
     const body = text.trim()
-    if (body === '') return
+    if (body === '' && attachments.length === 0) return
     if (state.archived) return
     if (state.phase === 'streaming' || state.phase === 'reconnecting') return
 
@@ -144,6 +154,7 @@ export function createRoomStore(
       role: 'user',
       body,
       createdAt: new Date(d.now()).toISOString(),
+      attachments: attachments.slice(),
       local: true,
     }
     state.messages.push(optimistic)
@@ -151,7 +162,12 @@ export function createRoomStore(
     controller = new AbortController()
     let response: Response
     try {
-      response = await d.sendMessage(roomId, body, controller.signal)
+      response = await d.sendMessage(
+        roomId,
+        body,
+        attachments.map((file) => file.id),
+        controller.signal,
+      )
     } catch {
       state.messages = state.messages.filter((m) => m.id !== optimistic.id)
       state.draft = text
@@ -171,6 +187,9 @@ export function createRoomStore(
       return
     }
 
+    // The server accepted the message; the composer may drop the uploaded
+    // chips while the reply streams.
+    onAccepted?.()
     await consume(response)
   }
 

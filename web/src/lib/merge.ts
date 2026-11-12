@@ -10,6 +10,7 @@ export function messageFromStored(row: StoredMessage): ChatMessage {
     role: row.role === 'user' ? 'user' : row.role === 'system' ? 'system' : 'assistant',
     body: row.body,
     createdAt: row.created_at,
+    attachments: row.attachments ?? [],
     local: false,
   }
 }
@@ -34,6 +35,7 @@ export function mergeStored(current: ChatMessage[], incoming: StoredMessage[]): 
           ...merged[index],
           body: row.body,
           role: messageFromStored(row).role,
+          attachments: row.attachments ?? [],
           local: false,
           incomplete: false,
         }
@@ -42,7 +44,11 @@ export function mergeStored(current: ChatMessage[], incoming: StoredMessage[]): 
     }
 
     const localIndex = merged.findIndex(
-      (m) => isLocalId(m.id) && m.role === messageFromStored(row).role && sameBody(m.body, row.body),
+      (m) =>
+        isLocalId(m.id) &&
+        m.role === messageFromStored(row).role &&
+        sameBody(m.body, row.body) &&
+        sameAttachments(m.attachments, row.attachments),
     )
     if (localIndex !== -1) {
       merged[localIndex] = messageFromStored(row)
@@ -59,4 +65,18 @@ export function mergeStored(current: ChatMessage[], incoming: StoredMessage[]): 
 
 function sameBody(a: string, b: string): boolean {
   return a === b || a.trim() === b.trim()
+}
+
+/**
+ * An attachment-only message has an empty body, so two of them in a row would
+ * otherwise collide. When the local bubble knows its file ids, require them to
+ * match the stored row.
+ */
+function sameAttachments(
+  local: Array<{ id: string }> | undefined,
+  stored: Array<{ id: string }> | undefined,
+): boolean {
+  if (!local || local.length === 0) return true
+  const ids = new Set((stored ?? []).map((file) => file.id))
+  return local.every((file) => ids.has(file.id))
 }

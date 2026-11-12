@@ -24,9 +24,16 @@ type Store interface {
 	ListRooms(ctx context.Context) ([]store.Room, error)
 	GetRoom(ctx context.Context, id uuid.UUID) (store.Room, error)
 	ArchiveRoom(ctx context.Context, id uuid.UUID) (store.Room, error)
+	UpdateRoomPrompt(ctx context.Context, arg store.UpdateRoomPromptParams) (store.Room, error)
 
 	InsertMessage(ctx context.Context, arg store.InsertMessageParams) (store.Message, error)
 	ListMessages(ctx context.Context, arg store.ListMessagesParams) ([]store.Message, error)
+
+	InsertFile(ctx context.Context, arg store.InsertFileParams) (store.File, error)
+	GetFile(ctx context.Context, id uuid.UUID) (store.File, error)
+	ListFiles(ctx context.Context, roomID uuid.UUID) ([]store.File, error)
+	DeleteFile(ctx context.Context, id uuid.UUID) (store.File, error)
+	AttachFileToMessage(ctx context.Context, arg store.AttachFileToMessageParams) (int64, error)
 }
 
 // Server wires the HTTP surface.
@@ -36,6 +43,7 @@ type Server struct {
 	auth    *auth.Service
 	logger  *slog.Logger
 	version string
+	dataDir string
 }
 
 // Options configures a Server.
@@ -45,6 +53,7 @@ type Options struct {
 	Auth    *auth.Service
 	Logger  *slog.Logger
 	Version string
+	DataDir string
 }
 
 // New builds the Echo application with all routes registered.
@@ -59,6 +68,7 @@ func New(opts Options) *echo.Echo {
 		auth:    opts.Auth,
 		logger:  logger,
 		version: opts.Version,
+		dataDir: opts.DataDir,
 	}
 
 	e := echo.New()
@@ -77,8 +87,14 @@ func New(opts Options) *echo.Echo {
 	e.GET("/api/rooms", s.listRooms)
 	e.GET("/api/rooms/:id", s.getRoom)
 	e.POST("/api/rooms/:id/archive", s.archiveRoom)
+	e.PATCH("/api/rooms/:id/prompt", s.updateRoomPrompt)
 	e.GET("/api/rooms/:id/messages", s.listMessages)
 	e.POST("/api/rooms/:id/messages", s.streamMessage)
+	e.GET("/api/rooms/:id/files", s.listRoomFiles)
+	e.POST("/api/rooms/:id/uploads", s.uploadFile)
+
+	e.GET("/api/files/:id", s.downloadFile)
+	e.DELETE("/api/files/:id", s.deleteFile)
 
 	return e
 }
@@ -143,22 +159,87 @@ func viewRoom(r store.Room) roomView {
 	}
 }
 
-type messageView struct {
+type attachmentView struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Mime   string `json:"mime"`
+	Size   int64  `json:"size"`
+	Sha256 string `json:"sha256"`
+}
+
+func viewAttachment(f store.File) attachmentView {
+	return attachmentView{
+		ID:     f.ID.String(),
+		Name:   f.Name,
+		Mime:   f.Mime,
+		Size:   f.Size,
+		Sha256: f.Sha256,
+	}
+}
+
+type fileView struct {
 	ID        string    `json:"id"`
 	RoomID    string    `json:"room_id"`
-	Role      string    `json:"role"`
-	Body      string    `json:"body"`
-	RunID     *string   `json:"run_id,omitempty"`
+	MessageID *string   `json:"message_id,omitempty"`
+	Source    string    `json:"source"`
+	Name      string    `json:"name"`
+	Mime      string    `json:"mime"`
+	Size      int64     `json:"size"`
+	Sha256    string    `json:"sha256"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
-func viewMessage(m store.Message) messageView {
-	return messageView{
-		ID:        m.ID.String(),
-		RoomID:    m.RoomID.String(),
-		Role:      m.Role,
-		Body:      m.Body,
-		RunID:     m.RunID,
-		CreatedAt: m.CreatedAt,
+func viewFile(f store.File) fileView {
+	var messageID *string
+	if f.MessageID != nil {
+		value := f.MessageID.String()
+		messageID = &value
 	}
+	return fileView{
+		ID:        f.ID.String(),
+		RoomID:    f.RoomID.String(),
+		MessageID: messageID,
+		Source:    f.Source,
+		Name:      f.Name,
+		Mime:      f.Mime,
+		Size:      f.Size,
+		Sha256:    f.Sha256,
+		CreatedAt: f.CreatedAt,
+	}
+}
+
+type messageView struct {
+	ID          string           `json:"id"`
+	RoomID      string           `json:"room_id"`
+	Role        string           `json:"role"`
+	Body        string           `json:"body"`
+	RunID       *string          `json:"run_id,omitempty"`
+	Attachments []attachmentView `json:"attachments"`
+	CreatedAt   time.Time        `json:"created_at"`
+}
+
+func viewMessage(m store.Message, attachments []store.File) messageView {
+	views := make([]attachmentView, 0, len(attachments))
+	for _, f := range attachments {
+		views = append(views, viewAttachment(f))
+	}
+	return messageView{
+		ID:          m.ID.String(),
+		RoomID:      m.RoomID.String(),
+		Role:        m.Role,
+		Body:        m.Body,
+		RunID:       m.RunID,
+		Attachments: views,
+		CreatedAt:   m.CreatedAt,
+	}
+}
+
+func attachmentsByMessage(files []store.File) map[uuid.UUID][]store.File {
+	out := make(map[uuid.UUID][]store.File)
+	for _, f := range files {
+		if f.MessageID != nil {
+			out[*f.MessageID] = append(out[*f.MessageID], f)
+		}
+	}
+	return out
 }

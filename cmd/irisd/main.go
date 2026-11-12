@@ -21,7 +21,7 @@ import (
 	"github.com/aryadhira/iris/internal/store"
 )
 
-const version = "0.1.0-p1a"
+const version = "0.1.0-p2"
 
 func main() {
 	if err := run(); err != nil {
@@ -50,6 +50,9 @@ func run() error {
 	if err := pool.Ping(bootCtx); err != nil {
 		return fmt.Errorf("cannot reach the database: %w", err)
 	}
+	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
+		return fmt.Errorf("cannot create IRIS_DATA_DIR at %s: %w", cfg.DataDir, err)
+	}
 	var roomsTable *string
 	if err := pool.QueryRow(bootCtx, "SELECT to_regclass('public.rooms')::text").Scan(&roomsTable); err != nil {
 		return fmt.Errorf("cannot inspect the database schema: %w", err)
@@ -68,6 +71,7 @@ func run() error {
 		Auth:    authService,
 		Logger:  logger,
 		Version: version,
+		DataDir: cfg.DataDir,
 	})
 
 	srv := &http.Server{
