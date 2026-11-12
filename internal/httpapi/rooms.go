@@ -84,14 +84,26 @@ func (s *Server) createRoom(c echo.Context) error {
 }
 
 func (s *Server) listRooms(c echo.Context) error {
-	rows, err := s.store.ListRooms(c.Request().Context())
+	ctx := c.Request().Context()
+	s.expireApprovals(ctx)
+	rows, err := s.store.ListRooms(ctx)
 	if err != nil {
 		s.logger.Error("cannot list rooms", "error", err)
 		return c.JSON(http.StatusInternalServerError, errorBody("Iris could not load your rooms."))
 	}
+	counts, err := s.store.CountPendingApprovalsByRoom(ctx, s.now())
+	if err != nil {
+		s.logger.Error("cannot count pending approvals", "error", err)
+	}
+	byRoom := make(map[uuid.UUID]int64, len(counts))
+	for _, row := range counts {
+		byRoom[row.RoomID] = row.Count
+	}
 	rooms := make([]roomView, 0, len(rows))
 	for _, row := range rows {
-		rooms = append(rooms, viewRoom(row))
+		view := viewRoom(row)
+		view.PendingApprovals = byRoom[row.ID]
+		rooms = append(rooms, view)
 	}
 	return c.JSON(http.StatusOK, map[string]any{"rooms": rooms})
 }
@@ -109,7 +121,16 @@ func (s *Server) getRoom(c echo.Context) error {
 		s.logger.Error("cannot get room", "error", err)
 		return c.JSON(http.StatusInternalServerError, errorBody("Iris could not open that room."))
 	}
-	return c.JSON(http.StatusOK, map[string]any{"room": viewRoom(row)})
+	s.expireApprovals(c.Request().Context())
+	view := viewRoom(row)
+	if counts, err := s.store.CountPendingApprovalsByRoom(c.Request().Context(), s.now()); err == nil {
+		for _, count := range counts {
+			if count.RoomID == row.ID {
+				view.PendingApprovals = count.Count
+			}
+		}
+	}
+	return c.JSON(http.StatusOK, map[string]any{"room": view})
 }
 
 func (s *Server) archiveRoom(c echo.Context) error {

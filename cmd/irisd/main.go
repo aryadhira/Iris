@@ -22,7 +22,7 @@ import (
 	irisvoice "github.com/aryadhira/iris/internal/voice"
 )
 
-const version = "0.1.0-p4"
+const version = "0.1.0-p6"
 
 func main() {
 	if err := run(); err != nil {
@@ -77,6 +77,9 @@ func run() error {
 		DataDir:          cfg.DataDir,
 		WebDir:           cfg.WebDir,
 		RunContinuations: true,
+		RunApprovals:     true,
+		ApprovalTimeout:  cfg.ApprovalTimeout,
+		ApprovalFixture:  cfg.ApprovalFixture,
 	})
 
 	srv := &http.Server{

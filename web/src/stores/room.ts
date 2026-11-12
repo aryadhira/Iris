@@ -4,6 +4,7 @@ import { humanizeServerError } from '../lib/errors'
 import { mergeStored } from '../lib/merge'
 import { frameJson, SseParser, type SseFrame } from '../lib/sse'
 import type {
+  Approval,
   ChatMessage,
   Continuation,
   FileAttachment,
@@ -17,6 +18,9 @@ export interface RoomStoreDeps {
   listMessages: (roomId: string, before?: string) => Promise<StoredMessage[]>
   getContinuation: (roomId: string) => Promise<Continuation | null>
   cancelContinuation: (roomId: string) => Promise<{ cancelled: number }>
+  listApprovals: (roomId: string) => Promise<Approval[]>
+  resolveApproval: (roomId: string, approvalId: string, choice: string) => Promise<Approval>
+  stopRoom: (roomId: string) => Promise<{ stopped: number; reason?: string }>
   sendMessage: (
     roomId: string,
     text: string,
@@ -32,6 +36,10 @@ export const liveDeps: RoomStoreDeps = {
   listMessages: (roomId, before) => api.listMessages(roomId, { before, limit: PAGE_SIZE }),
   getContinuation: (roomId) => api.getContinuation(roomId),
   cancelContinuation: (roomId) => api.cancelContinuation(roomId),
+  listApprovals: (roomId) => api.listApprovals(roomId),
+  resolveApproval: (roomId, approvalId, choice) =>
+    api.resolveApproval(roomId, approvalId, choice),
+  stopRoom: (roomId) => api.stopRoom(roomId),
   sendMessage: (roomId, text, attachmentIds, signal) =>
     api.sendMessage(roomId, text, attachmentIds, signal),
   sleep: (ms) => new Promise((resolve) => window.setTimeout(resolve, ms)),
@@ -81,6 +89,13 @@ export function createRoomStore(
     continuation: null as Continuation | null,
     continuationError: '',
 
+    approvals: [] as Approval[],
+    approvalError: '',
+    resolvingApproval: '',
+    resolvingChoice: '',
+    stopping: false,
+    stopNotice: '',
+
     draft: '',
     archived: options.archived ?? false,
   })
@@ -119,6 +134,7 @@ export function createRoomStore(
       state.canLoadOlder = rows.length >= PAGE_SIZE
       state.loaded = true
       await refreshContinuation()
+      await refreshApprovals()
     } catch {
       state.loadError = 'Iris tidak bisa memuat pesan room ini. Coba lagi.'
     } finally {
@@ -156,6 +172,63 @@ export function createRoomStore(
       if (previous && !next) await reconcile()
     } catch {
       state.continuationError = 'Status lanjutan tidak bisa dibaca.'
+    }
+  }
+
+  async function refreshApprovals(): Promise<void> {
+    try {
+      state.approvals = await d.listApprovals(roomId)
+      if (state.approvalError === 'Status izin tidak bisa dibaca.') state.approvalError = ''
+    } catch {
+      state.approvalError = 'Status izin tidak bisa dibaca.'
+    }
+  }
+
+  function upsertApproval(row: Approval): void {
+    const index = state.approvals.findIndex((existing) => existing.id === row.id)
+    if (index === -1) state.approvals.push(row)
+    else state.approvals[index] = row
+  }
+
+  /** Answer one parked approval. The card is disabled while this is in flight. */
+  async function resolveApproval(id: string, choice: string): Promise<void> {
+    if (state.resolvingApproval !== '') return
+    state.resolvingApproval = id
+    state.resolvingChoice = choice
+    state.approvalError = ''
+    try {
+      const updated = await d.resolveApproval(roomId, id, choice)
+      upsertApproval(updated)
+    } catch (error) {
+      state.approvalError =
+        error instanceof Error && error.message.trim() !== ''
+          ? error.message
+          : 'Izin ini belum bisa dijawab. Coba lagi.'
+      await refreshApprovals()
+    } finally {
+      state.resolvingApproval = ''
+      state.resolvingChoice = ''
+    }
+  }
+
+  /** "hentikan": stop the actual Hermes run, not just this tab's view. */
+  async function stopRun(): Promise<void> {
+    if (state.stopping) return
+    state.stopping = true
+    state.stopNotice = ''
+    try {
+      const result = await d.stopRoom(roomId)
+      // On success the transcript gets its own system line; do not repeat it
+      // here. A zero-stop answer still needs its reason on screen.
+      state.stopNotice =
+        result.stopped > 0 ? '' : (result.reason ?? 'tidak ada yang berjalan')
+    } catch {
+      state.stopNotice = 'Room belum bisa dihentikan. Coba lagi.'
+    } finally {
+      state.stopping = false
+      await reconcile()
+      await refreshContinuation()
+      await refreshApprovals()
     }
   }
 
@@ -235,6 +308,7 @@ export function createRoomStore(
     onAccepted?.()
     await consume(response)
     await refreshContinuation()
+    await refreshApprovals()
   }
 
   async function consume(response: Response): Promise<void> {
@@ -306,10 +380,16 @@ export function createRoomStore(
         if (payload?.name) state.currentTool = payload.name
         return false
       }
+      case 'approval': {
+        const payload = frameJson<Approval>(frame)
+        if (payload?.id) upsertApproval(payload)
+        return false
+      }
       case 'done': {
         const payload = frameJson<{ messageId?: string }>(frame)
         finishTurn(payload?.messageId ?? '')
         void reconcile()
+        void refreshApprovals()
         return true
       }
       case 'error': {
@@ -456,6 +536,9 @@ export function createRoomStore(
     loadOlder,
     refreshContinuation,
     stopContinuation,
+    refreshApprovals,
+    resolveApproval,
+    stopRun,
     send,
     reload,
     dispose,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createRoomStore, type RoomStoreDeps } from './room'
-import type { StoredMessage } from '../lib/types'
+import type { Approval, StoredMessage } from '../lib/types'
 
 const ROOM = 'room-1'
 
@@ -60,10 +60,11 @@ interface Script {
     due_at: string
     deadline: string
   } | null
+  approvals?: Approval[]
 }
 
 function makeDeps(script: Script) {
-  const calls = { list: 0, send: 0, cancel: 0, continuation: 0 }
+  const calls = { list: 0, send: 0, cancel: 0, continuation: 0, resolve: 0, stop: 0 }
   const deps: Partial<RoomStoreDeps> = {
     listMessages: async () => {
       const rows = script.list[Math.min(calls.list, script.list.length - 1)]
@@ -77,6 +78,22 @@ function makeDeps(script: Script) {
     cancelContinuation: async () => {
       calls.cancel += 1
       return { cancelled: 1 }
+    },
+    listApprovals: async () => script.approvals ?? [],
+    resolveApproval: async (_roomId, approvalId, choice) => {
+      calls.resolve += 1
+      const updated = (script.approvals ?? []).find((row) => row.id === approvalId)
+      if (!updated) throw new Error('Izin itu tidak ada di room ini.')
+      return {
+        ...updated,
+        state: choice === 'deny' ? 'denied' : 'allowed',
+        choice,
+        resolved_at: '2026-11-12T11:00:05Z',
+      }
+    },
+    stopRoom: async () => {
+      calls.stop += 1
+      return { stopped: 1 }
     },
     sendMessage: async () => {
       calls.send += 1
@@ -257,4 +274,73 @@ describe('room store', () => {
     expect(calls.cancel).toBe(1)
     expect(store.state.continuation).toBe(null)
   })
+  it('shows an approval pushed through the same SSE path, then a receipt', async () => {
+    const approval: Approval = {
+      id: 'ap1',
+      room_id: ROOM,
+      tool_name: 'write_file',
+      command: '<write to AGENTS.md>',
+      description: 'Write to protected agent-instruction file(s)',
+      choices: ['once', 'deny'],
+      state: 'pending',
+      created_at: '2026-11-12T11:00:02Z',
+      expires_at: '2026-11-12T11:05:00Z',
+    }
+    const { deps, calls } = makeDeps({
+      list: [[stored('u1', 'user', 'halo', 1)]],
+      stream: [
+        `event: approval\ndata: ${JSON.stringify(approval)}\n\n`,
+        'event: delta\ndata: {"text":"menunggu"}\n\n',
+        'event: done\ndata: {"messageId":"a2"}\n\n',
+      ],
+      approvals: [approval],
+    })
+    const store = createRoomStore(ROOM, deps)
+    await store.load()
+    expect(store.state.approvals.map((row) => row.state)).toEqual(['pending'])
+
+    await store.send('tulis file')
+    await tick()
+    expect(store.state.approvals).toHaveLength(1)
+
+    await store.resolveApproval('ap1', 'once')
+    expect(calls.resolve).toBe(1)
+    expect(store.state.approvals[0].state).toBe('allowed')
+    expect(store.state.approvals[0].choice).toBe('once')
+  })
+
+  it('keeps a refused approval in the transcript as denied', async () => {
+    const approval: Approval = {
+      id: 'ap2',
+      room_id: ROOM,
+      command: '<write to AGENTS.md>',
+      choices: ['once', 'deny'],
+      state: 'pending',
+      created_at: '2026-11-12T11:00:02Z',
+      expires_at: '2026-11-12T11:05:00Z',
+    }
+    const { deps } = makeDeps({
+      list: [[stored('u1', 'user', 'halo', 1)]],
+      stream: DELTA_DONE,
+      approvals: [approval],
+    })
+    const store = createRoomStore(ROOM, deps)
+    await store.load()
+    await store.resolveApproval('ap2', 'deny')
+    expect(store.state.approvals[0].state).toBe('denied')
+    expect(store.state.approvals[0].choice).toBe('deny')
+  })
+
+  it('calls the real stop endpoint instead of only hiding the spinner', async () => {
+    const { deps, calls } = makeDeps({
+      list: [[stored('u1', 'user', 'halo', 1)]],
+      stream: DELTA_DONE,
+    })
+    const store = createRoomStore(ROOM, deps)
+    await store.load()
+    await store.stopRun()
+    expect(calls.stop).toBe(1)
+    expect(store.state.stopNotice).toBe('')
+  })
+
 })

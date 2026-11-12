@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  approvalCountdown,
+  approvalSeconds,
   countdownLabel,
   countdownSeconds,
   durationLabel,
+  needsStopConfirm,
   roomState,
   statusKind,
   timelineRows,
@@ -51,5 +54,26 @@ describe('run timeline', () => {
     expect(roomState(false, false, 'STATUS: BLOCKED — butuh izin')).toBe('needs-you')
     expect(roomState(false, false, 'STATUS: DONE — selesai')).toBe('idle')
     expect(statusKind(undefined)).toBeNull()
+  })
+
+  it('puts a parked approval above work, then returns to work once it expires', () => {
+    expect(roomState(true, false, undefined, 2)).toBe('needs-approval')
+    expect(roomState(true, false, undefined, 0)).toBe('working')
+    expect(roomState(false, true, undefined, 1)).toBe('needs-approval')
+  })
+
+  it('asks for a stop confirmation only after a minute', () => {
+    const start = Date.parse('2026-11-12T10:00:00Z')
+    expect(needsStopConfirm(start, start + 59_000)).toBe(false)
+    expect(needsStopConfirm(start, start + 61_000)).toBe(true)
+    expect(needsStopConfirm(0, start)).toBe(false)
+  })
+
+  it('counts down to the approval deadline, then says expired', () => {
+    const now = Date.parse('2026-11-12T10:00:00Z')
+    expect(approvalSeconds('2026-11-12T10:00:12Z', now)).toBe(12)
+    expect(approvalCountdown('2026-11-12T10:00:12Z', now)).toBe('12 detik lagi')
+    expect(approvalCountdown('2026-11-12T10:01:05Z', now)).toBe('1 mnt 05 dtk lagi')
+    expect(approvalCountdown('2026-11-12T09:59:59Z', now)).toBe('kedaluwarsa')
   })
 })

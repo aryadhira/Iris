@@ -23,6 +23,9 @@ const props = defineProps<{
   voiceLevel: number
   voiceError: string
   voiceLocked: boolean
+  canStop: boolean
+  stopping: boolean
+  stopArmed: boolean
 }>()
 
 const emit = defineEmits<{
@@ -35,6 +38,9 @@ const emit = defineEmits<{
   'voice-cancel': []
   'voice-toggle': []
   'voice-dismiss': []
+  stop: []
+  'stop-confirm': []
+  'stop-cancel': []
 }>()
 
 const textarea = ref<HTMLTextAreaElement | null>(null)
@@ -347,25 +353,36 @@ onMounted(autosize)
           </div>
 
           <div class="ml-auto flex shrink-0 items-center gap-1.5">
-            <span
-              v-if="running"
-              class="inline-flex"
-              title="Stop belum tersambung ke server. Tutup room ini untuk berhenti menonton balasan."
-            >
+            <template v-if="stopArmed">
+              <span class="text-[11.5px] text-muted">Hentikan sekarang?</span>
               <button
                 type="button"
-                class="tap flex items-center gap-1.5 rounded-xl border border-line px-3 text-[12.5px] text-quiet"
-                disabled
-                data-testid="stop-button"
-                aria-describedby="stop-note"
+                class="tap flex items-center gap-1 rounded-xl border border-red-400/50 px-2.5 text-[12px] text-red-300"
+                data-testid="stop-confirm"
+                @click="emit('stop-confirm')"
               >
-                <PhStop :size="14" weight="fill" />
-                Stop
+                Ya
               </button>
-            </span>
-            <span id="stop-note" class="sr-only">
-              Stop belum tersambung ke server; tombol ini sengaja dinonaktifkan.
-            </span>
+              <button
+                type="button"
+                class="tap rounded-xl border border-line px-2.5 text-[12px] text-muted"
+                data-testid="stop-cancel"
+                @click="emit('stop-cancel')"
+              >
+                Batal
+              </button>
+            </template>
+            <button
+              v-else-if="canStop"
+              type="button"
+              class="tap flex items-center gap-1.5 rounded-xl border border-line px-3 text-[12.5px] text-muted transition-colors hover:border-red-400/50 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-60"
+              :disabled="stopping"
+              data-testid="stop-button"
+              @click="emit('stop')"
+            >
+              <PhStop :size="14" weight="fill" />
+              {{ stopping ? 'Menghentikan…' : 'Stop' }}
+            </button>
 
             <button
               type="button"

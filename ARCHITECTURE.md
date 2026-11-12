@@ -41,6 +41,24 @@ Hermes will **not** wake an API session when a background job finishes in this b
    room as a system line with a countdown and a stop button. Pending chains live in the `continuations`
    table, so a restart cannot double them and a chain inside its window resumes on boot.
 
+## Approvals and stop
+
+A turn is identified by its Hermes `run_id` (stored on the assistant message and in `runs`). Without it
+neither an approval nor a stop can target anything. The id is visible only in the room's run inspector.
+
+When Hermes flags a command it emits `approval.request` on the same SSE stream, with the command already
+redacted and a `request_id`. irisd stores an `approvals` row (run, request, tool, redacted command, the
+choices Hermes actually offered, deadline, state) and publishes `event: approval` to the room's stream.
+The phone answers through `POST /api/rooms/{id}/approvals/{approvalId}`; irisd validates the choice against
+the stored list, proxies `/v1/runs/{run_id}/approval` with the stored `request_id`, and turns a 409 into
+"izinnya sudah tidak berlaku" rather than a 500. A denied or expired approval is never replayed by the
+continuation pump. At `approvals.timeout` (mirrored from Hermes) the row becomes `expired`; Iris never
+claims it was answered. The card remains in the transcript as a receipt.
+
+`POST /api/rooms/{id}/stop` finds live runs in `runs`, calls `/v1/runs/{id}/stop`, and is idempotent. It
+cancels pending continuations, writes one visible system line ("dihentikan oleh Boss"), and a stopped run
+cannot arm a follow-up: a stop is a decision, not a pause.
+
 ## Rooms
 
 A room is a row in irisd plus one Hermes session id. Rename/archive are ours; the conversation is

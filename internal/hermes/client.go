@@ -31,6 +31,13 @@ type Event struct {
 	// come from the real stream clock, not from when irisd happened to read a line.
 	TS  float64
 	Raw []byte
+
+	// Approval fields. Hermes redacts the command before it leaves the gateway;
+	// irisd stores exactly what arrived and never logs it.
+	RequestID   string
+	Command     string
+	Description string
+	Choices     []string
 }
 
 // Client is the surface httpapi depends on. Tests use a fake implementation.
@@ -38,6 +45,14 @@ type Client interface {
 	CreateSession(ctx context.Context, title, systemPrompt string) (id string, err error)
 	StreamChat(ctx context.Context, sessionID, text, instructions string, onEvent func(Event) error) error
 	DeleteSession(ctx context.Context, sessionID string) error
+	ResolveApproval(ctx context.Context, runID, requestID, choice string) error
+	StopRun(ctx context.Context, runID string) (RunStatus, error)
+}
+
+// RunStatus is the gateway's answer to a stop request.
+type RunStatus struct {
+	RunID  string `json:"run_id"`
+	Status string `json:"status"`
 }
 
 var (
@@ -58,20 +73,43 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("hermes returned HTTP %d: %s", e.StatusCode, e.Body)
 }
 
+// Code returns the gateway's machine-readable error code when the body carries
+// one (for example “approval_not_pending“). The body is never copied into a
+// log by irisd: handlers map the code to owner-facing Indonesian copy.
+func (e *APIError) Code() string {
+	var nested struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal([]byte(e.Body), &nested); err != nil {
+		return ""
+	}
+	if nested.Error.Code != "" {
+		return nested.Error.Code
+	}
+	return nested.Code
+}
+
 const (
 	defaultIdleTimeout = 90 * time.Second
-	connectTimeout     = 10 * time.Second
-	maxErrorBody       = 4 << 10
-	maxSSELine         = 4 << 20
+	// defaultApprovalIdleTimeout covers Hermes' approvals.timeout (300 s by
+	// default) plus the gateway's unwind after a timeout.
+	defaultApprovalIdleTimeout = 10 * time.Minute
+	connectTimeout             = 10 * time.Second
+	maxErrorBody               = 4 << 10
+	maxSSELine                 = 4 << 20
 )
 
 // APIClient talks to the Hermes api_server over loopback with bearer auth.
 type APIClient struct {
-	baseURL     string
-	apiKey      string
-	http        *http.Client
-	logger      *slog.Logger
-	idleTimeout time.Duration
+	baseURL             string
+	apiKey              string
+	http                *http.Client
+	logger              *slog.Logger
+	idleTimeout         time.Duration
+	approvalIdleTimeout time.Duration
 }
 
 // New returns a client for baseURL (for example http://127.0.0.1:8642).
@@ -88,11 +126,12 @@ func New(baseURL, apiKey string, logger *slog.Logger) *APIClient {
 		MaxIdleConns:          10,
 	}
 	return &APIClient{
-		baseURL:     strings.TrimRight(baseURL, "/"),
-		apiKey:      apiKey,
-		http:        &http.Client{Transport: transport},
-		logger:      logger,
-		idleTimeout: defaultIdleTimeout,
+		baseURL:             strings.TrimRight(baseURL, "/"),
+		apiKey:              apiKey,
+		http:                &http.Client{Transport: transport},
+		logger:              logger,
+		idleTimeout:         defaultIdleTimeout,
+		approvalIdleTimeout: defaultApprovalIdleTimeout,
 	}
 }
 
@@ -100,6 +139,13 @@ func New(baseURL, apiKey string, logger *slog.Logger) *APIClient {
 func (c *APIClient) SetIdleTimeout(d time.Duration) {
 	if d > 0 {
 		c.idleTimeout = d
+	}
+}
+
+// SetApprovalIdleTimeout overrides how long a parked approval may stay silent.
+func (c *APIClient) SetApprovalIdleTimeout(d time.Duration) {
+	if d > 0 {
+		c.approvalIdleTimeout = d
 	}
 }
 

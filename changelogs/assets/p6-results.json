@@ -1,0 +1,198 @@
+[
+  {
+    "scope": "390",
+    "name": "fixture approval accepted",
+    "pass": true,
+    "detail": "status=201",
+    "at": "2026-11-12T05:21:49.730Z"
+  },
+  {
+    "scope": "390",
+    "name": "card arrived over SSE before the 4 s poll",
+    "pass": true,
+    "detail": "28 ms",
+    "at": "2026-11-12T05:21:49.732Z"
+  },
+  {
+    "scope": "390",
+    "name": "card is pending",
+    "pass": true,
+    "detail": "pending",
+    "at": "2026-11-12T05:21:49.734Z"
+  },
+  {
+    "scope": "390",
+    "name": "redacted command is in a code block",
+    "pass": true,
+    "detail": "rtp --config /tmp/p6-demo.conf",
+    "at": "2026-11-12T05:21:49.734Z"
+  },
+  {
+    "scope": "390",
+    "name": "tool name is shown",
+    "pass": true,
+    "detail": "Hermes minta izin\n\nLewat menulis berkas. Menulis konfigurasi yang mengubah perilaku agen\n\n10 mnt 00 dtk lagi\nrtp --confi",
+    "at": "2026-11-12T05:21:49.734Z"
+  },
+  {
+    "scope": "390",
+    "name": "Izinkan sekali is primary",
+    "pass": true,
+    "detail": "[\"Izinkan sekali\",\"Sesi ini\",\"Selalu izinkan\",\"Tolak\"]",
+    "at": "2026-11-12T05:21:49.734Z"
+  },
+  {
+    "scope": "390",
+    "name": "Selalu izinkan is offered when Hermes offered it",
+    "pass": true,
+    "detail": "",
+    "at": "2026-11-12T05:21:49.734Z"
+  },
+  {
+    "scope": "390",
+    "name": "Sesi ini is offered when Hermes offered it",
+    "pass": true,
+    "detail": "",
+    "at": "2026-11-12T05:21:49.734Z"
+  },
+  {
+    "scope": "390",
+    "name": "Tolak is present",
+    "pass": true,
+    "detail": "",
+    "at": "2026-11-12T05:21:49.734Z"
+  },
+  {
+    "scope": "390",
+    "name": "touch target is at least 44 px",
+    "pass": true,
+    "detail": "44 px",
+    "at": "2026-11-12T05:21:49.734Z"
+  },
+  {
+    "scope": "390",
+    "name": "buttons stack full-width under 420 px",
+    "pass": true,
+    "detail": "button=328 actions=328",
+    "at": "2026-11-12T05:21:49.734Z"
+  },
+  {
+    "scope": "390",
+    "name": "card becomes an allowed receipt",
+    "pass": true,
+    "detail": "allowed",
+    "at": "2026-11-12T05:21:50.218Z"
+  },
+  {
+    "scope": "390",
+    "name": "no Selalu izinkan when Hermes did not offer it",
+    "pass": true,
+    "detail": "[\"Izinkan sekali\",\"Tolak\"]",
+    "at": "2026-11-12T05:21:50.401Z"
+  },
+  {
+    "scope": "390",
+    "name": "no Sesi ini when Hermes did not offer it",
+    "pass": true,
+    "detail": "[\"Izinkan sekali\",\"Tolak\"]",
+    "at": "2026-11-12T05:21:50.401Z"
+  },
+  {
+    "scope": "390",
+    "name": "global Escape does not deny anything",
+    "pass": true,
+    "detail": "",
+    "at": "2026-11-12T05:21:51.107Z"
+  },
+  {
+    "scope": "390",
+    "name": "Escape denies only when the card is focused",
+    "pass": true,
+    "detail": "",
+    "at": "2026-11-12T05:21:51.225Z"
+  },
+  {
+    "scope": "1440",
+    "name": "card renders at 1440x900",
+    "pass": true,
+    "detail": "",
+    "at": "2026-11-12T05:21:51.808Z"
+  },
+  {
+    "scope": "1440",
+    "name": "desktop has no horizontal overflow",
+    "pass": true,
+    "detail": "",
+    "at": "2026-11-12T05:21:51.808Z"
+  },
+  {
+    "scope": "1440",
+    "name": "Sesi ini answered at 1440 and became a receipt",
+    "pass": true,
+    "detail": "",
+    "at": "2026-11-12T05:21:52.243Z"
+  },
+  {
+    "scope": "390",
+    "name": "Enter on the focused card answers the primary choice",
+    "pass": true,
+    "detail": "2 allowed-once receipts",
+    "at": "2026-11-12T05:21:52.813Z"
+  },
+  {
+    "scope": "390",
+    "name": "chip says butuh izin while the card is pending",
+    "pass": true,
+    "detail": "butuh izin · 1",
+    "at": "2026-11-12T05:21:53.090Z"
+  },
+  {
+    "scope": "390",
+    "name": "expired card says so",
+    "pass": true,
+    "detail": "12.21\n\nrtp --expire-probe\n\nIzin ini sudah kedaluwarsa",
+    "at": "2026-11-12T05:21:56.144Z"
+  },
+  {
+    "scope": "390",
+    "name": "expired card has no answer buttons",
+    "pass": true,
+    "detail": "0",
+    "at": "2026-11-12T05:21:56.145Z"
+  },
+  {
+    "scope": "390",
+    "name": "room leaves butuh izin after the deadline",
+    "pass": true,
+    "detail": "bekerja",
+    "at": "2026-11-12T05:21:57.420Z"
+  },
+  {
+    "scope": "390",
+    "name": "no \"belum tersambung\" placeholder remains",
+    "pass": true,
+    "detail": "",
+    "at": "2026-11-12T05:21:57.760Z"
+  },
+  {
+    "scope": "390",
+    "name": "Stop is enabled while the room is working",
+    "pass": true,
+    "detail": "{\"disabled\":false,\"text\":\"Stop\"}",
+    "at": "2026-11-12T05:21:57.761Z"
+  },
+  {
+    "scope": "390",
+    "name": "a young run stops without a confirmation",
+    "pass": true,
+    "detail": "",
+    "at": "2026-11-12T05:21:57.768Z"
+  },
+  {
+    "scope": "390",
+    "name": "Stop posted the system note and ended the work",
+    "pass": true,
+    "detail": "",
+    "at": "2026-11-12T05:21:58.182Z"
+  }
+]

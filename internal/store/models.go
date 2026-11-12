@@ -10,6 +10,23 @@ import (
 	"github.com/google/uuid"
 )
 
+type Approval struct {
+	ID          uuid.UUID
+	RoomID      uuid.UUID
+	RunID       string
+	SessionID   string
+	RequestID   string
+	ToolName    string
+	Command     string
+	Description string
+	Choices     []string
+	State       string
+	Choice      *string
+	CreatedAt   time.Time
+	ExpiresAt   time.Time
+	ResolvedAt  *time.Time
+}
+
 type AuthSession struct {
 	TokenHash string
 	CreatedAt time.Time
@@ -64,4 +81,14 @@ type Room struct {
 	ArchivedAt      *time.Time
 	FolderPath      string
 	SystemPrompt    string
+}
+
+type Run struct {
+	RunID      string
+	RoomID     uuid.UUID
+	SessionID  string
+	Status     string
+	StartedAt  time.Time
+	UpdatedAt  time.Time
+	FinishedAt *time.Time
 }

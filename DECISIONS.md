@@ -86,3 +86,23 @@ Broken markers stay visible.
 **Consequences.** The contract costs ~100 tokens per turn. It is editable without recreating the Hermes
 session (the prompt is ours, not the session's). Existing P1 rooms have an empty folder path and need a
 backfill or recreation before they can carry files.
+
+## ADR-007 — Approvals are Iris receipts; stop is final
+
+**Status:** accepted (2026-11-12)
+
+**Context.** Hermes redacts a flagged command before it leaves the gateway and parks a run as
+`waiting_for_approval`. The api_server surface resolves the approval by `run_id` + `request_id` and stops a
+run by `run_id`, both behind the bearer key. A phone that drops its SSE connection must not lose the
+decision, and a denied or expired command must never be replayed by the continuation pump.
+
+**Decision.** irisd owns a `runs` row and an `approvals` row. The command is stored exactly as Hermes sent
+it (already redacted) and is never logged. The choices list is authoritative: Iris never offers `always` or
+`session` unless Hermes did. Iris' approval deadline mirrors `approvals.timeout`; at the deadline the row is
+`expired`, never `allowed`. A stop writes `dihentikan oleh Boss`, marks the run stopping/cancelled, and
+cancels the chain; a later continuation cannot resurrect it.
+
+**Consequences.** A Hermes upgrade that changes the approval payload is a parser change in one place
+(`internal/hermes/sse.go`) with a captured-event test. The browser never sees the API key or `request_id`.
+Expiry depends on `IRIS_APPROVAL_TIMEOUT` matching the gateway's `approvals.timeout`; the acceptance script
+reads the gateway's value instead of hard-coding it.

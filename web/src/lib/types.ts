@@ -2,8 +2,24 @@ export interface Room {
   id: string
   name: string
   topic: string
+  pending_approvals?: number
   created_at: string
   archived_at?: string | null
+}
+
+/** One dangerous-command approval, exactly as irisd stored it. */
+export interface Approval {
+  id: string
+  room_id: string
+  tool_name?: string
+  command: string
+  description?: string
+  choices: string[]
+  state: 'pending' | 'allowed' | 'denied' | 'expired' | 'superseded'
+  choice?: string | null
+  created_at: string
+  expires_at: string
+  resolved_at?: string | null
 }
 
 /** A file that belongs to a room, as irisd returns it. */
@@ -72,6 +88,8 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'system'
   body: string
   createdAt: string
+  /** Hermes run id; shown only inside the timeline inspector. */
+  runId?: string
   meta?: MessageMeta
   attachments?: FileAttachment[]
   /** True for a message that exists only in this browser tab. */

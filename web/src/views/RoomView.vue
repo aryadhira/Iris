@@ -10,6 +10,7 @@ import {
   PhSpeakerHigh,
   PhSpeakerSlash,
 } from '@phosphor-icons/vue'
+import ApprovalCard from '../components/ApprovalCard.vue'
 import BrandMark from '../components/BrandMark.vue'
 import Composer from '../components/Composer.vue'
 import ContinuationLine from '../components/ContinuationLine.vue'
@@ -20,8 +21,8 @@ import WorkingLine from '../components/WorkingLine.vue'
 import { ApiError, api } from '../lib/api'
 import { humanizeServerError } from '../lib/errors'
 import { downloadBlob } from '../lib/files'
-import { roomState } from '../lib/timeline'
-import type { ChatMessage, Room, TurnPhase } from '../lib/types'
+import { approvalSeconds, needsStopConfirm, roomState } from '../lib/timeline'
+import type { Approval, ChatMessage, Room, TurnPhase } from '../lib/types'
 import { createAttachmentStore, type AttachmentStore } from '../stores/attachments'
 import { createRoomStore, type RoomStore } from '../stores/room'
 import { createSpeakerStore, createVoiceStore } from '../stores/voice'
@@ -88,14 +89,59 @@ const pendingAttachments = computed(() => attachments.value?.state.items ?? [])
 const uploadBlock = computed(() => attachments.value?.blockReason ?? '')
 const continuation = computed(() => store.value?.state.continuation ?? null)
 const continuationError = computed(() => store.value?.state.continuationError ?? '')
+const approvals = computed(() => store.value?.state.approvals ?? [])
+const pendingApprovals = computed(
+  () =>
+    approvals.value.filter(
+      (row) => row.state === 'pending' && approvalSeconds(row.expires_at, Date.now()) > 0,
+    ).length,
+)
+const approvalError = computed(() => store.value?.state.approvalError ?? '')
+const resolvingApproval = computed(() => store.value?.state.resolvingApproval ?? '')
+const resolvingChoice = computed(() => store.value?.state.resolvingChoice ?? '')
+const stopping = computed(() => store.value?.state.stopping ?? false)
+const stopNotice = computed(() => store.value?.state.stopNotice ?? '')
+const canStop = computed(
+  () => pendingApprovals.value === 0 && (isWorking.value || Boolean(continuation.value)),
+)
+const stopArmed = ref(false)
 const lastAssistant = computed(() => {
   for (let i = messages.value.length - 1; i >= 0; i -= 1) {
     if (messages.value[i].role === 'assistant') return messages.value[i]
   }
   return undefined
 })
+
+interface TimelineItem {
+  key: string
+  createdAt: string
+  message?: ChatMessage
+  approval?: Approval
+}
+
+/** Messages and approval receipts share one chronological transcript. */
+const timelineItems = computed<TimelineItem[]>(() => {
+  const items: TimelineItem[] = []
+  for (const message of messages.value) {
+    items.push({ key: `m-${message.id}`, createdAt: message.createdAt, message })
+  }
+  for (const approval of approvals.value) {
+    items.push({ key: `a-${approval.id}`, createdAt: approval.created_at, approval })
+  }
+  return items.sort((a, b) => {
+    const left = Date.parse(a.createdAt)
+    const right = Date.parse(b.createdAt)
+    if (Number.isFinite(left) && Number.isFinite(right) && left !== right) return left - right
+    return a.key < b.key ? -1 : 1
+  })
+})
 const stateChip = computed(() =>
-  roomState(isWorking.value, Boolean(continuation.value), lastAssistant.value?.meta?.statusLine),
+  roomState(
+    isWorking.value,
+    Boolean(continuation.value),
+    lastAssistant.value?.meta?.statusLine,
+    pendingApprovals.value,
+  ),
 )
 const stateChipLabel = computed(
   () =>
@@ -104,6 +150,7 @@ const stateChipLabel = computed(
       working: 'bekerja',
       waiting: 'menunggu proses',
       'needs-you': 'butuh kamu',
+      'needs-approval': `butuh izin · ${pendingApprovals.value}`,
     })[stateChip.value],
 )
 const stateChipClass = computed(() => {
@@ -114,12 +161,15 @@ const stateChipClass = computed(() => {
       return 'border-line bg-surface text-muted'
     case 'needs-you':
       return 'border-violet/60 bg-violet/20 text-ink'
+    case 'needs-approval':
+      return 'border-orchid/60 bg-orchid/15 text-orchid'
     default:
       return 'border-line text-quiet'
   }
 })
 
 let continuationTimer: number | undefined
+let approvalTimer: number | undefined
 
 function autoSpeakStorageKey(id: string): string {
   return `iris.autospeak.${id}`
@@ -171,6 +221,28 @@ function dismissVoiceError(): void {
 
 async function stopContinuation(): Promise<void> {
   await store.value?.stopContinuation()
+}
+
+function resolveApproval(id: string, choice: string): void {
+  void store.value?.resolveApproval(id, choice)
+}
+
+function requestStop(): void {
+  if (!canStop.value || stopping.value) return
+  if (needsStopConfirm(turnStartedAt.value, Date.now()) && !stopArmed.value) {
+    stopArmed.value = true
+    return
+  }
+  void stopNow()
+}
+
+async function stopNow(): Promise<void> {
+  stopArmed.value = false
+  await store.value?.stopRun()
+}
+
+function cancelStop(): void {
+  stopArmed.value = false
 }
 
 function onScroll(): void {
@@ -342,7 +414,7 @@ watch(
 )
 
 watch(
-  () => [messages.value.length, streamingText.value.length],
+  () => [messages.value.length, approvals.value.length, streamingText.value.length],
   async () => {
     if (!nearBottom.value) return
     await nextTick()
@@ -385,12 +457,16 @@ onMounted(async () => {
   continuationTimer = window.setInterval(() => {
     void store.value?.refreshContinuation()
   }, 4000)
+  approvalTimer = window.setInterval(() => {
+    void store.value?.refreshApprovals()
+  }, 4000)
 })
 
 onBeforeUnmount(() => {
   contentObserver?.disconnect()
   contentObserver = null
   if (continuationTimer !== undefined) window.clearInterval(continuationTimer)
+  if (approvalTimer !== undefined) window.clearInterval(approvalTimer)
   if (highlightTimer !== undefined) window.clearTimeout(highlightTimer)
   voice.dispose()
   speaker.dispose()
@@ -607,21 +683,38 @@ onBeforeUnmount(() => {
             </button>
 
             <ol class="space-y-5" data-testid="message-list">
-              <li
-                v-for="message in messages"
-                :key="message.id"
-                :data-message-id="message.id"
-                class="rounded-2xl transition-shadow"
-                :class="highlightedId === message.id ? 'ring-2 ring-orchid/60 ring-offset-2 ring-offset-bg' : ''"
-              >
-                <MessageBubble
-                  :message="message"
-                  :speaking="speaker.state.playingId === message.id"
-                  :loading-speech="speaker.state.loadingId === message.id"
-                  @speak="speakMessage(message)"
-                />
-              </li>
+              <template v-for="item in timelineItems" :key="item.key">
+                <li
+                  v-if="item.message"
+                  :data-message-id="item.message.id"
+                  class="rounded-2xl transition-shadow"
+                  :class="
+                    highlightedId === item.message.id
+                      ? 'ring-2 ring-orchid/60 ring-offset-2 ring-offset-bg'
+                      : ''
+                  "
+                >
+                  <MessageBubble
+                    :message="item.message"
+                    :speaking="speaker.state.playingId === item.message.id"
+                    :loading-speech="speaker.state.loadingId === item.message.id"
+                    @speak="speakMessage(item.message)"
+                  />
+                </li>
+                <li v-else-if="item.approval">
+                  <ApprovalCard
+                    :approval="item.approval"
+                    :resolving-choice="
+                      resolvingApproval === item.approval.id ? resolvingChoice : ''
+                    "
+                    @resolve="resolveApproval(item.approval.id, $event)"
+                  />
+                </li>
+              </template>
             </ol>
+            <p v-if="approvalError" class="text-[12px] text-muted" role="alert" data-testid="approval-error">
+              {{ approvalError }}
+            </p>
 
             <!-- Streaming reply grows in place; the working line never hides. -->
             <div v-if="isWorking" class="flex gap-3" data-testid="streaming-turn">
@@ -652,6 +745,9 @@ onBeforeUnmount(() => {
             />
             <p v-if="continuationError" class="text-[12px] text-quiet" role="alert">
               {{ continuationError }}
+            </p>
+            <p v-if="stopNotice" class="text-[12px] text-quiet" role="status" data-testid="stop-notice">
+              {{ stopNotice }}
             </p>
 
             <p v-else-if="loaded && messages.length > 0" class="pt-3 text-center text-[11.5px] text-quiet">
@@ -702,7 +798,13 @@ onBeforeUnmount(() => {
       :voice-level="voice.state.level"
       :voice-error="voice.state.errorText"
       :voice-locked="voice.state.locked"
+      :can-stop="canStop"
+      :stopping="stopping"
+      :stop-armed="stopArmed"
       @send="send"
+      @stop="requestStop"
+      @stop-confirm="stopNow"
+      @stop-cancel="cancelStop"
       @files="addFiles"
       @remove="removeAttachment"
       @voice-start="voice.start(false)"

@@ -34,6 +34,8 @@ type fakeStore struct {
 	sessions map[string]store.AuthSession
 
 	continuations []store.Continuation
+	approvals     []store.Approval
+	runs          map[string]store.Run
 
 	createRoomCalls int
 	lastRoomArg     store.CreateRoomParams
@@ -45,6 +47,7 @@ func newFakeStore() *fakeStore {
 		rooms:    map[uuid.UUID]store.Room{},
 		files:    map[uuid.UUID]store.File{},
 		sessions: map[string]store.AuthSession{},
+		runs:     map[string]store.Run{},
 	}
 }
 
@@ -480,6 +483,173 @@ func (f *fakeStore) DeleteAuthSession(_ context.Context, tokenHash string) error
 	return nil
 }
 
+func (f *fakeStore) UpsertRun(_ context.Context, arg store.UpsertRunParams) (store.Run, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	row, ok := f.runs[arg.RunID]
+	if !ok {
+		row = store.Run{RunID: arg.RunID, StartedAt: arg.StartedAt}
+	}
+	row.RoomID = arg.RoomID
+	row.SessionID = arg.SessionID
+	row.Status = arg.Status
+	row.UpdatedAt = arg.StartedAt
+	f.runs[arg.RunID] = row
+	return row, nil
+}
+
+func (f *fakeStore) UpdateRunStatus(_ context.Context, arg store.UpdateRunStatusParams) (store.Run, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	row, ok := f.runs[arg.RunID]
+	if !ok {
+		return store.Run{}, pgx.ErrNoRows
+	}
+	row.Status = arg.Status
+	row.UpdatedAt = arg.UpdatedAt
+	row.FinishedAt = arg.FinishedAt
+	f.runs[arg.RunID] = row
+	return row, nil
+}
+
+func (f *fakeStore) GetRun(_ context.Context, runID string) (store.Run, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	row, ok := f.runs[runID]
+	if !ok {
+		return store.Run{}, pgx.ErrNoRows
+	}
+	return row, nil
+}
+
+func (f *fakeStore) ListActiveRuns(_ context.Context, roomID uuid.UUID) ([]store.Run, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]store.Run, 0)
+	for _, row := range f.runs {
+		if row.RoomID != roomID {
+			continue
+		}
+		if row.Status == "queued" || row.Status == "running" || row.Status == "waiting_for_approval" {
+			out = append(out, row)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) UpsertApproval(_ context.Context, arg store.UpsertApprovalParams) (store.Approval, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.approvals {
+		if f.approvals[i].RunID == arg.RunID && f.approvals[i].RequestID == arg.RequestID {
+			f.approvals[i].ToolName = arg.ToolName
+			f.approvals[i].Command = arg.Command
+			f.approvals[i].Description = arg.Description
+			f.approvals[i].Choices = arg.Choices
+			return f.approvals[i], nil
+		}
+	}
+	row := store.Approval{
+		ID:          arg.ID,
+		RoomID:      arg.RoomID,
+		RunID:       arg.RunID,
+		SessionID:   arg.SessionID,
+		RequestID:   arg.RequestID,
+		ToolName:    arg.ToolName,
+		Command:     arg.Command,
+		Description: arg.Description,
+		Choices:     arg.Choices,
+		State:       "pending",
+		CreatedAt:   arg.CreatedAt,
+		ExpiresAt:   arg.ExpiresAt,
+	}
+	f.approvals = append(f.approvals, row)
+	return row, nil
+}
+
+func (f *fakeStore) GetApproval(_ context.Context, id uuid.UUID) (store.Approval, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, row := range f.approvals {
+		if row.ID == id {
+			return row, nil
+		}
+	}
+	return store.Approval{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) ListApprovals(_ context.Context, roomID uuid.UUID) ([]store.Approval, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]store.Approval, 0)
+	for _, row := range f.approvals {
+		if row.RoomID == roomID {
+			out = append(out, row)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) ResolveApproval(_ context.Context, arg store.ResolveApprovalParams) (store.Approval, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.approvals {
+		if f.approvals[i].ID == arg.ID {
+			if f.approvals[i].State != "pending" {
+				return store.Approval{}, pgx.ErrNoRows
+			}
+			f.approvals[i].State = arg.State
+			f.approvals[i].Choice = arg.Choice
+			f.approvals[i].ResolvedAt = arg.ResolvedAt
+			return f.approvals[i], nil
+		}
+	}
+	return store.Approval{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) ExpireApprovals(_ context.Context, resolvedAt *time.Time) ([]store.Approval, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]store.Approval, 0)
+	for i := range f.approvals {
+		row := &f.approvals[i]
+		if row.State == "pending" && !row.ExpiresAt.After(*resolvedAt) {
+			row.State = "expired"
+			row.ResolvedAt = resolvedAt
+			out = append(out, *row)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) CountPendingApprovalsByRoom(_ context.Context, expiresAt time.Time) ([]store.CountPendingApprovalsByRoomRow, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	counts := map[uuid.UUID]int64{}
+	for _, row := range f.approvals {
+		if row.State == "pending" && row.ExpiresAt.After(expiresAt) {
+			counts[row.RoomID]++
+		}
+	}
+	out := make([]store.CountPendingApprovalsByRoomRow, 0, len(counts))
+	for roomID, count := range counts {
+		out = append(out, store.CountPendingApprovalsByRoomRow{RoomID: roomID, Count: count})
+	}
+	return out, nil
+}
+
+func (f *fakeStore) approvalsFor(roomID uuid.UUID) []store.Approval {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]store.Approval, 0)
+	for _, row := range f.approvals {
+		if row.RoomID == roomID {
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
 func (f *fakeStore) messagesFor(roomID uuid.UUID) []store.Message {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -509,6 +679,18 @@ type fakeHermes struct {
 	lastText     string
 	instructions string
 	onStream     func(ctx context.Context, emit func(hermes.Event) error) error
+
+	resolveCalls []resolveCall
+	resolveErr   error
+	stopCalls    []string
+	stopErr      error
+	stopStatus   string
+}
+
+type resolveCall struct {
+	RunID     string
+	RequestID string
+	Choice    string
 }
 
 func (f *fakeHermes) CreateSession(_ context.Context, _ string, systemPrompt string) (string, error) {
@@ -544,6 +726,27 @@ func (f *fakeHermes) StreamChat(ctx context.Context, _ string, text, instruction
 		}
 	}
 	return f.streamErr
+}
+
+func (f *fakeHermes) ResolveApproval(_ context.Context, runID, requestID, choice string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.resolveCalls = append(f.resolveCalls, resolveCall{RunID: runID, RequestID: requestID, Choice: choice})
+	return f.resolveErr
+}
+
+func (f *fakeHermes) StopRun(_ context.Context, runID string) (hermes.RunStatus, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.stopCalls = append(f.stopCalls, runID)
+	if f.stopErr != nil {
+		return hermes.RunStatus{}, f.stopErr
+	}
+	status := f.stopStatus
+	if status == "" {
+		status = "stopping"
+	}
+	return hermes.RunStatus{RunID: runID, Status: status}, nil
 }
 
 func newTestApp(t *testing.T, st *fakeStore, hm hermes.Client) *echo.Echo {

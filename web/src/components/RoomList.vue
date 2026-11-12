@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { PhArchive, PhPlus } from '@phosphor-icons/vue'
 import { api } from '../lib/api'
@@ -71,8 +71,19 @@ function goToRoom(id: string): void {
   void router.push(`/r/${id}`)
 }
 
+let refreshTimer: number | undefined
+
 onMounted(() => {
   void loadRooms()
+  // The dot is a live answer to "is Hermes waiting on me?", so the list reads
+  // the count again instead of trusting the first page load.
+  refreshTimer = window.setInterval(() => {
+    void loadRooms(true)
+  }, 5000)
+})
+
+onBeforeUnmount(() => {
+  if (refreshTimer !== undefined) window.clearInterval(refreshTimer)
 })
 </script>
 
@@ -136,6 +147,13 @@ onMounted(() => {
                 <span class="truncate text-[13.5px]" :class="isActive(room.id) ? 'text-ink' : 'text-muted'">
                   {{ room.name }}
                 </span>
+                <span
+                  v-if="(room.pending_approvals ?? 0) > 0"
+                  class="h-2 w-2 shrink-0 rounded-full bg-orchid"
+                  data-testid="room-approval-dot"
+                  :aria-label="`${room.pending_approvals} izin menunggu`"
+                  :title="`${room.pending_approvals} izin menunggu`"
+                />
               </span>
               <span v-if="room.topic" class="w-full truncate text-[12px] text-quiet">
                 {{ room.topic }}

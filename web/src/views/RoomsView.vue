@@ -93,8 +93,14 @@ const rooms = computed(() => activeRooms.value)
               class="group flex h-full flex-col rounded-2xl border border-line bg-surface/60 p-4 transition-colors hover:border-orchid/40 hover:bg-surface"
             >
               <div class="flex items-start justify-between gap-3">
-                <h2 class="min-w-0 break-words text-[15px] font-medium leading-snug text-ink">
+                <h2 class="flex min-w-0 items-center gap-2 break-words text-[15px] font-medium leading-snug text-ink">
                   {{ room.name }}
+                  <span
+                    v-if="(room.pending_approvals ?? 0) > 0"
+                    class="h-2 w-2 shrink-0 rounded-full bg-orchid"
+                    data-testid="room-approval-dot"
+                    :aria-label="`${room.pending_approvals} izin menunggu`"
+                  />
                 </h2>
                 <PhArrowUpRight
                   :size="16"

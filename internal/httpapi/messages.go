@@ -13,6 +13,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -205,7 +206,10 @@ func (s *Server) streamMessage(c echo.Context) error {
 		}
 	}()
 
+	var sendMu sync.Mutex
 	send := func(event string, payload any) {
+		sendMu.Lock()
+		defer sendMu.Unlock()
 		if gone.Load() {
 			return
 		}
@@ -222,6 +226,31 @@ func (s *Server) streamMessage(c echo.Context) error {
 		c.Response().Flush()
 	}
 
+	// Approvals are room events, not turn-only frames: another request (the
+	// answer, a sweeper, or a fixture) may publish while this stream is open.
+	events, unsubscribe := s.hub.subscribe(room.ID)
+	hubDone := make(chan struct{})
+	defer func() {
+		close(hubDone)
+		unsubscribe()
+	}()
+	go func() {
+		for {
+			select {
+			case ev, ok := <-events:
+				if !ok {
+					return
+				}
+				send(ev.Name, ev.Payload)
+				if ev.ack != nil {
+					close(ev.ack)
+				}
+			case <-hubDone:
+				return
+			}
+		}
+	}()
+
 	outcome, streamErr := s.runTurn(turnCtx, room, promptText, send)
 	rawBody := outcome.rawBody
 
@@ -237,7 +266,10 @@ func (s *Server) streamMessage(c echo.Context) error {
 
 	// The safety net only arms after a clean turn. A turn that died mid-stream
 	// has no trustworthy "what is still running" claim.
-	if streamErr == nil && saved != nil {
+	// A stop or a refused/expired approval is a decision. The safety net must
+	// not resurrect it with an automatic follow-up.
+	if streamErr == nil && saved != nil && !outcome.stopped &&
+		!s.runWasDenied(turnCtx, room.ID, outcome.runID) && !s.runIsStopped(turnCtx, outcome.runID) {
 		s.scheduleAfterTurn(turnCtx, room, chainRef{
 			id:        saved.ID,
 			createdAt: saved.CreatedAt,

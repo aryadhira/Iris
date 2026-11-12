@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/aryadhira/iris/internal/artifacts"
 	"github.com/aryadhira/iris/internal/continuation"
@@ -24,6 +25,7 @@ type turnOutcome struct {
 	rawBody string
 	runID   string
 	meta    continuation.Meta
+	stopped bool
 }
 
 type toolTrace struct {
@@ -108,15 +110,19 @@ func (s *Server) runTurn(
 	emit func(name string, payload any),
 ) (turnOutcome, error) {
 	var (
-		assistant strings.Builder
-		finalText string
-		runID     string
+		assistant     strings.Builder
+		finalText     string
+		runID         string
+		stopped       bool
+		completedSeen bool
 	)
 	trace := newToolTrace()
+	currentTool := ""
 
 	streamErr := s.hermes.StreamChat(ctx, room.HermesSessionID, prompt, rooms.TurnInstructions(room.SystemPrompt), func(ev hermes.Event) error {
-		if ev.RunID != "" {
+		if ev.RunID != "" && ev.RunID != runID {
 			runID = ev.RunID
+			s.upsertRun(ctx, room, runID, ev.SessionID, "running")
 		}
 		trace.observe(ev, s.now())
 		switch ev.Kind {
@@ -124,6 +130,9 @@ func (s *Server) runTurn(
 			assistant.WriteString(ev.Text)
 			sendEvent(emit, "delta", map[string]string{"text": ev.Text})
 		case "tool":
+			if ev.Name != "" && (ev.Status == "started" || ev.Status == "" || ev.Status == "running") {
+				currentTool = ev.Name
+			}
 			name := ev.Name
 			if name == "" {
 				name = "tool"
@@ -133,10 +142,33 @@ func (s *Server) runTurn(
 				status = "running"
 			}
 			sendEvent(emit, "tool", map[string]string{"name": name, "status": status})
+		case "approval":
+			toolName := ev.Name
+			if toolName == "" {
+				// The session-stream approval payload carries the command and
+				// description but no tool name. The tool.started that caused it
+				// is real stream data, so use that rather than inventing one.
+				toolName = currentTool
+			}
+			ev.Name = toolName
+			s.updateRunStatus(ctx, runID, "waiting_for_approval", false)
+			if row, err := s.recordApproval(ctx, room, runID, ev, room.HermesSessionID); err != nil {
+				s.logger.Error("cannot persist approval", "error", err, "room_id", room.ID.String(), "run_id", runID)
+			} else {
+				s.hub.publish(room.ID, roomEvent{Name: "approval", Payload: viewApproval(*row)})
+			}
 		case "done":
 			if ev.Text != "" {
 				finalText = ev.Text
 			}
+			// The bare ``done`` sentinel closes the stream after run.cancelled;
+			// it must not overwrite a stop decision with "completed".
+			if ev.OriginalKind == "run.completed" || ev.OriginalKind == "assistant.completed" || ev.OriginalKind == "" {
+				completedSeen = true
+			}
+		case "cancelled":
+			stopped = true
+			finalText = ""
 		case "error":
 			message := ev.Text
 			if message == "" {
@@ -167,15 +199,83 @@ func (s *Server) runTurn(
 		_, statusLine = continuation.ParseStatus(finalText)
 	}
 
+	switch {
+	case stopped:
+		s.updateRunStatus(ctx, runID, "cancelled", true)
+	case streamErr != nil:
+		s.finishRunUnlessStopping(ctx, runID)
+	case completedSeen:
+		s.updateRunStatus(ctx, runID, "completed", true)
+	default:
+		s.finishRunUnlessStopping(ctx, runID)
+	}
+
 	return turnOutcome{
 		rawBody: rawBody,
 		runID:   runID,
+		stopped: stopped,
 		meta: continuation.Meta{
 			Procs:      trace.procs,
 			Tools:      trace.tools,
 			StatusLine: statusLine,
 		},
 	}, streamErr
+}
+
+func (s *Server) upsertRun(ctx context.Context, room store.Room, runID, sessionID, status string) {
+	if runID == "" {
+		return
+	}
+	if sessionID == "" {
+		sessionID = room.HermesSessionID
+	}
+	now := s.now()
+	if _, err := s.store.UpsertRun(ctx, store.UpsertRunParams{
+		RunID:     runID,
+		RoomID:    room.ID,
+		SessionID: sessionID,
+		Status:    status,
+		StartedAt: now,
+	}); err != nil {
+		s.logger.Error("cannot record run", "error", err, "run_id", runID, "room_id", room.ID.String())
+	}
+}
+
+func (s *Server) updateRunStatus(ctx context.Context, runID, status string, finished bool) {
+	if runID == "" {
+		return
+	}
+	now := s.now()
+	params := store.UpdateRunStatusParams{
+		RunID:     runID,
+		Status:    status,
+		UpdatedAt: now,
+	}
+	if finished {
+		params.FinishedAt = &now
+	}
+	if _, err := s.store.UpdateRunStatus(ctx, params); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		s.logger.Error("cannot update run status", "error", err, "run_id", runID, "status", status)
+	}
+}
+
+// finishRunUnlessStopping never overwrites a stop decision with "failed": the
+// gateway's cancelled event may arrive after the stream's read loop returns.
+func (s *Server) finishRunUnlessStopping(ctx context.Context, runID string) {
+	if runID == "" {
+		return
+	}
+	row, err := s.store.GetRun(ctx, runID)
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			s.logger.Error("cannot read run before failure", "error", err, "run_id", runID)
+		}
+		return
+	}
+	if row.Status == "stopping" || row.Status == "cancelled" || row.Status == "completed" {
+		return
+	}
+	s.updateRunStatus(ctx, runID, "failed", true)
 }
 
 func sendEvent(emit func(name string, payload any), name string, payload any) {
@@ -256,4 +356,15 @@ func (s *Server) persistAssistant(
 		s.saveArtifact(room, row.ID, item)
 	}
 	return &row, nil
+}
+
+func (s *Server) runIsStopped(ctx context.Context, runID string) bool {
+	if runID == "" {
+		return false
+	}
+	row, err := s.store.GetRun(ctx, runID)
+	if err != nil {
+		return false
+	}
+	return row.Status == "stopping" || row.Status == "cancelled"
 }

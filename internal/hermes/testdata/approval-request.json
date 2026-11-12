@@ -1,0 +1,24 @@
+{
+  "command": "rtk curl -s --max-time 2 http://169.254.169.254/latest/meta-data/ || echo P6-PROBE-TIDAK-ADA",
+  "pattern_key": "cloud metadata endpoint access (instance credentials)",
+  "pattern_keys": [
+    "cloud metadata endpoint access (instance credentials)"
+  ],
+  "description": "cloud metadata endpoint access (instance credentials)",
+  "allow_permanent": true,
+  "allow_session": true,
+  "request_id": "3902fce5059745cf90de336c6a942a00",
+  "event": "approval.request",
+  "run_id": "run_2a1004c7eedb4e29825f5c3c5f1e3b71",
+  "timestamp": 1794458198.9067833,
+  "message_id": "msg_71721666a69f46edb951e953b6933356",
+  "choices": [
+    "once",
+    "session",
+    "always",
+    "deny"
+  ],
+  "session_id": "api_1794457951_19dd0df1",
+  "seq": 4,
+  "ts": 1794458198.9068284
+}

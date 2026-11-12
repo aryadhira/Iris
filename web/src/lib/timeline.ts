@@ -48,18 +48,43 @@ export function countdownLabel(dueAt: string, now: number): string {
   return `lanjut otomatis dalam ${seconds} detik`
 }
 
-export type RunState = 'idle' | 'working' | 'waiting' | 'needs-you'
+export type RunState = 'idle' | 'working' | 'waiting' | 'needs-you' | 'needs-approval'
 
 /** Header chip: a stalled chain must never look like idle. */
 export function roomState(
   working: boolean,
   waiting: boolean,
   lastStatusLine: string | undefined,
+  pendingApprovals = 0,
 ): RunState {
+  // A parked command needs Boss more than a timer needs a label.
+  if (pendingApprovals > 0) return 'needs-approval'
   if (working) return 'working'
   if (waiting) return 'waiting'
   if (statusKind(lastStatusLine) === 'blocked') return 'needs-you'
   return 'idle'
+}
+
+/** A stop is confirmed only after a minute of real work. */
+export function needsStopConfirm(startedAt: number, now: number): boolean {
+  if (!startedAt || startedAt <= 0) return false
+  return now - startedAt > 60_000
+}
+
+/** Seconds left before Iris stops accepting an answer. */
+export function approvalSeconds(expiresAt: string, now: number): number {
+  const expires = Date.parse(expiresAt)
+  if (Number.isNaN(expires)) return 0
+  return Math.ceil((expires - now) / 1000)
+}
+
+export function approvalCountdown(expiresAt: string, now: number): string {
+  const seconds = approvalSeconds(expiresAt, now)
+  if (seconds <= 0) return 'kedaluwarsa'
+  if (seconds < 60) return `${seconds} detik lagi`
+  const minutes = Math.floor(seconds / 60)
+  const rest = seconds % 60
+  return `${minutes} mnt ${String(rest).padStart(2, '0')} dtk lagi`
 }
 
 export function statusKind(line?: string): 'running' | 'done' | 'blocked' | null {

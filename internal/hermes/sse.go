@@ -92,21 +92,29 @@ func (c *APIClient) StreamChat(ctx context.Context, sessionID, text, instruction
 	if idle <= 0 {
 		idle = defaultIdleTimeout
 	}
+	// A parked approval is work, not silence: Hermes may send nothing for the
+	// whole approvals.timeout while a human decides. Keep the watchdog alive
+	// long enough for that decision and the gateway's own timeout.
+	approvalIdle := c.approvalIdleTimeout
+	if approvalIdle <= 0 {
+		approvalIdle = defaultApprovalIdleTimeout
+	}
 	timer := time.NewTimer(idle)
 	defer timer.Stop()
-	resetTimer := func() {
+	resetTimer := func(d time.Duration) {
 		if !timer.Stop() {
 			select {
 			case <-timer.C:
 			default:
 			}
 		}
-		timer.Reset(idle)
+		timer.Reset(d)
 	}
 
 	var (
 		eventName string
 		data      []string
+		parked    bool
 	)
 
 	dispatch := func() error {
@@ -117,6 +125,9 @@ func (c *APIClient) StreamChat(ctx context.Context, sessionID, text, instruction
 		ev := normalize(eventName, raw, c.logger)
 		eventName = ""
 		data = data[:0]
+		if ev.Kind == "approval" {
+			parked = true
+		}
 		return onEvent(ev)
 	}
 
@@ -140,6 +151,10 @@ func (c *APIClient) StreamChat(ctx context.Context, sessionID, text, instruction
 				if err := dispatch(); err != nil {
 					return err
 				}
+				if parked {
+					resetTimer(approvalIdle)
+					parked = false
+				}
 				continue
 			}
 			if strings.HasPrefix(line, ":") {
@@ -148,11 +163,11 @@ func (c *APIClient) StreamChat(ctx context.Context, sessionID, text, instruction
 			switch {
 			case strings.HasPrefix(line, "event:"):
 				eventName = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
-				resetTimer()
+				resetTimer(idle)
 			case strings.HasPrefix(line, "data:"):
 				value := strings.TrimPrefix(strings.TrimPrefix(line, "data:"), " ")
 				data = append(data, value)
-				resetTimer()
+				resetTimer(idle)
 			}
 		}
 	}
@@ -167,19 +182,23 @@ func normalize(name string, raw []byte, logger *slog.Logger) Event {
 	}
 
 	var p struct {
-		SessionID string  `json:"session_id"`
-		RunID     string  `json:"run_id"`
-		MessageID string  `json:"message_id"`
-		Delta     string  `json:"delta"`
-		Content   string  `json:"content"`
-		ToolName  string  `json:"tool_name"`
-		Name      string  `json:"name"`
-		Tool      string  `json:"tool"`
-		Status    string  `json:"status"`
-		Error     string  `json:"error"`
-		Message   string  `json:"message"`
-		Detail    string  `json:"detail"`
-		TS        float64 `json:"ts"`
+		SessionID   string   `json:"session_id"`
+		RunID       string   `json:"run_id"`
+		MessageID   string   `json:"message_id"`
+		Delta       string   `json:"delta"`
+		Content     string   `json:"content"`
+		ToolName    string   `json:"tool_name"`
+		Name        string   `json:"name"`
+		Tool        string   `json:"tool"`
+		Status      string   `json:"status"`
+		RequestID   string   `json:"request_id"`
+		Command     string   `json:"command"`
+		Description string   `json:"description"`
+		Choices     []string `json:"choices"`
+		Error       string   `json:"error"`
+		Message     string   `json:"message"`
+		Detail      string   `json:"detail"`
+		TS          float64  `json:"ts"`
 	}
 	_ = json.Unmarshal(raw, &p)
 
@@ -201,6 +220,15 @@ func normalize(name string, raw []byte, logger *slog.Logger) Event {
 		ev.Kind = "tool"
 		ev.Name = firstNonEmpty(p.ToolName, p.Name, p.Tool)
 		ev.Status = firstNonEmpty(p.Status, toolStatus(name))
+	case name == "approval.request":
+		ev.Kind = "approval"
+		ev.Name = firstNonEmpty(p.ToolName, p.Name, p.Tool)
+		ev.RequestID = p.RequestID
+		ev.Command = p.Command
+		ev.Description = p.Description
+		ev.Choices = append([]string(nil), p.Choices...)
+	case name == "run.cancelled" || name == "assistant.cancelled":
+		ev.Kind = "cancelled"
 	case name == "run.failed" || name == "assistant.failed" || name == "error" || name == "turn.failed":
 		ev.Kind = "error"
 		ev.Text = firstNonEmpty(p.Error, p.Message, p.Detail)

@@ -143,7 +143,7 @@ const time = computed(() => {
       <div v-if="artifacts.length > 0" class="mt-2 space-y-1.5" data-testid="artifact-list">
         <ArtifactCard v-for="file in artifacts" :key="file.id" :file="file" />
       </div>
-      <RunTimeline :meta="message.meta" />
+      <RunTimeline :meta="message.meta" :run-id="message.runId" />
       <p v-if="message.incomplete" class="mt-1.5 text-[12px] text-quiet">
         Balasan terputus — mungkin belum lengkap.
       </p>

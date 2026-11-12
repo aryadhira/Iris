@@ -50,6 +50,18 @@ type Store interface {
 	ListFiles(ctx context.Context, roomID uuid.UUID) ([]store.File, error)
 	DeleteFile(ctx context.Context, id uuid.UUID) (store.File, error)
 	AttachFileToMessage(ctx context.Context, arg store.AttachFileToMessageParams) (int64, error)
+
+	UpsertRun(ctx context.Context, arg store.UpsertRunParams) (store.Run, error)
+	UpdateRunStatus(ctx context.Context, arg store.UpdateRunStatusParams) (store.Run, error)
+	GetRun(ctx context.Context, runID string) (store.Run, error)
+	ListActiveRuns(ctx context.Context, roomID uuid.UUID) ([]store.Run, error)
+
+	UpsertApproval(ctx context.Context, arg store.UpsertApprovalParams) (store.Approval, error)
+	GetApproval(ctx context.Context, id uuid.UUID) (store.Approval, error)
+	ListApprovals(ctx context.Context, roomID uuid.UUID) ([]store.Approval, error)
+	ResolveApproval(ctx context.Context, arg store.ResolveApprovalParams) (store.Approval, error)
+	ExpireApprovals(ctx context.Context, resolvedAt *time.Time) ([]store.Approval, error)
+	CountPendingApprovalsByRoom(ctx context.Context, expiresAt time.Time) ([]store.CountPendingApprovalsByRoomRow, error)
 }
 
 // Server wires the HTTP surface.
@@ -66,6 +78,10 @@ type Server struct {
 	// clock must be able to cross the 30 minute cap without sleeping.
 	now                  func() time.Time
 	continuationInterval time.Duration
+
+	hub             *roomHub
+	approvalTimeout time.Duration
+	approvalFixture bool
 }
 
 // Options configures a Server.
@@ -81,6 +97,9 @@ type Options struct {
 	Now                  func() time.Time
 	ContinuationInterval time.Duration
 	RunContinuations     bool
+	ApprovalTimeout      time.Duration
+	RunApprovals         bool
+	ApprovalFixture      bool
 }
 
 // New builds the Echo application with all routes registered.
@@ -90,14 +109,17 @@ func New(opts Options) *echo.Echo {
 		logger = slog.Default()
 	}
 	s := &Server{
-		store:   opts.Store,
-		hermes:  opts.Hermes,
-		voice:   opts.Voice,
-		auth:    opts.Auth,
-		logger:  logger,
-		version: opts.Version,
-		dataDir: opts.DataDir,
-		now:     opts.Now,
+		store:           opts.Store,
+		hermes:          opts.Hermes,
+		voice:           opts.Voice,
+		auth:            opts.Auth,
+		logger:          logger,
+		version:         opts.Version,
+		dataDir:         opts.DataDir,
+		now:             opts.Now,
+		hub:             newRoomHub(),
+		approvalTimeout: opts.ApprovalTimeout,
+		approvalFixture: opts.ApprovalFixture,
 	}
 	if s.now == nil {
 		s.now = time.Now
@@ -129,6 +151,12 @@ func New(opts Options) *echo.Echo {
 	e.GET("/api/rooms/:id/export.md", s.exportRoom)
 	e.GET("/api/rooms/:id/continuation", s.getContinuation)
 	e.POST("/api/rooms/:id/continuation/cancel", s.cancelContinuation)
+	e.GET("/api/rooms/:id/approvals", s.listApprovals)
+	e.POST("/api/rooms/:id/approvals/:approvalId", s.resolveApproval)
+	e.POST("/api/rooms/:id/stop", s.stopRoom)
+	if opts.ApprovalFixture {
+		e.POST("/api/rooms/:id/approvals/fixture", s.fixtureApproval)
+	}
 	e.GET("/api/rooms/:id/files", s.listRoomFiles)
 	e.POST("/api/rooms/:id/uploads", s.uploadFile)
 
@@ -149,6 +177,9 @@ func New(opts Options) *echo.Echo {
 
 	if opts.RunContinuations {
 		s.StartContinuations(context.Background())
+	}
+	if opts.RunApprovals {
+		s.StartApprovals(context.Background())
 	}
 
 	return e
@@ -197,11 +228,12 @@ func errorBody(message string) map[string]string {
 // roomView is the browser-facing room shape; the Hermes session id stays
 // server-side.
 type roomView struct {
-	ID         string     `json:"id"`
-	Name       string     `json:"name"`
-	Topic      string     `json:"topic"`
-	CreatedAt  time.Time  `json:"created_at"`
-	ArchivedAt *time.Time `json:"archived_at,omitempty"`
+	ID               string     `json:"id"`
+	Name             string     `json:"name"`
+	Topic            string     `json:"topic"`
+	PendingApprovals int64      `json:"pending_approvals"`
+	CreatedAt        time.Time  `json:"created_at"`
+	ArchivedAt       *time.Time `json:"archived_at,omitempty"`
 }
 
 func viewRoom(r store.Room) roomView {

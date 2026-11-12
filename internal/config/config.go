@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -33,6 +35,12 @@ type Config struct {
 	// WebDir is the built SPA irisd serves. It is deliberately optional: a
 	// missing build is a broken UI, never a broken API.
 	WebDir string
+	// ApprovalTimeout mirrors Hermes' approvals.timeout. Iris expires its
+	// pending card at the same wall-clock point rather than claiming a decision.
+	ApprovalTimeout time.Duration
+	// ApprovalFixture registers a synthetic approval endpoint for browser
+	// tests. Off by default and never for a real deployment.
+	ApprovalFixture bool
 }
 
 // Load reads IRIS_* variables, validates them, and refuses clearly when a
@@ -66,6 +74,18 @@ func Load() (*Config, error) {
 	}
 	cfg.DataDir = dataDir
 
+	approvalTimeout, err := parseSeconds(envOr("IRIS_APPROVAL_TIMEOUT", "300"))
+	if err != nil {
+		return nil, fmt.Errorf("IRIS_APPROVAL_TIMEOUT must be a whole number of seconds: %w", err)
+	}
+	cfg.ApprovalTimeout = approvalTimeout
+
+	fixture, err := parseBool(os.Getenv("IRIS_APPROVAL_FIXTURE"))
+	if err != nil {
+		return nil, fmt.Errorf("IRIS_APPROVAL_FIXTURE must be true or false: %w", err)
+	}
+	cfg.ApprovalFixture = fixture
+
 	webDir, err := ExpandHome(envOr("IRIS_WEB_DIR", DefaultWebDir))
 	if err != nil {
 		return nil, fmt.Errorf("IRIS_WEB_DIR is not a usable path: %w", err)
@@ -97,6 +117,14 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func parseSeconds(v string) (time.Duration, error) {
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("got %q", v)
+	}
+	return time.Duration(n) * time.Second, nil
 }
 
 func parseBool(v string) (bool, error) {

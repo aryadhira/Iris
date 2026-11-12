@@ -1,4 +1,4 @@
-import type { Continuation, FileAttachment, Room, RoomFile, SearchResult, StoredMessage } from './types'
+import type { Approval, Continuation, FileAttachment, Room, RoomFile, SearchResult, StoredMessage } from './types'
 import { filenameFromDisposition } from './files'
 
 export class ApiError extends Error {
@@ -156,6 +156,29 @@ export const api = {
     })
   },
 
+  async listApprovals(roomId: string): Promise<Approval[]> {
+    const body = await request<ApprovalPage>(
+      `/api/rooms/${encodeURIComponent(roomId)}/approvals`,
+    )
+    return body.approvals ?? []
+  },
+
+  async resolveApproval(
+    roomId: string,
+    approvalId: string,
+    choice: string,
+  ): Promise<Approval> {
+    const body = await request<{ approval: Approval }>(
+      `/api/rooms/${encodeURIComponent(roomId)}/approvals/${encodeURIComponent(approvalId)}`,
+      { method: 'POST', body: JSON.stringify({ choice }) },
+    )
+    return body.approval
+  },
+
+  stopRoom(roomId: string): Promise<StopResult> {
+    return request(`/api/rooms/${encodeURIComponent(roomId)}/stop`, { method: 'POST' })
+  },
+
   deleteFile(id: string): Promise<{ deleted: boolean }> {
     return request(`/api/files/${encodeURIComponent(id)}`, { method: 'DELETE' })
   },
@@ -228,4 +251,13 @@ export const api = {
       xhr.send(form)
     })
   },
+}
+
+export interface ApprovalPage {
+  approvals: Approval[]
+}
+
+export interface StopResult {
+  stopped: number
+  reason?: string
 }

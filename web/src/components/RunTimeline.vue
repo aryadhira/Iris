@@ -4,7 +4,7 @@ import { PhCaretRight } from '@phosphor-icons/vue'
 import { durationLabel, timelineRows } from '../lib/timeline'
 import type { MessageMeta } from '../lib/types'
 
-const props = defineProps<{ meta?: MessageMeta }>()
+const props = defineProps<{ meta?: MessageMeta; runId?: string }>()
 const rows = computed(() => timelineRows(props.meta))
 </script>
 
@@ -20,6 +20,13 @@ const rows = computed(() => timelineRows(props.meta))
       />
       apa yang Hermes lakukan
     </summary>
+    <p
+      v-if="runId"
+      class="mt-1 font-mono text-[10.5px] leading-snug text-quiet"
+      data-testid="run-id"
+    >
+      run {{ runId }}
+    </p>
     <ol class="mt-1.5 space-y-1 border-l border-line pl-3" data-testid="run-timeline-list">
       <li
         v-for="(row, index) in rows"
