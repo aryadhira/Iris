@@ -14,7 +14,7 @@ import FileLightbox from './FileLightbox.vue'
 import FormattedText from './FormattedText.vue'
 import RunTimeline from './RunTimeline.vue'
 import SpeakerButton from './SpeakerButton.vue'
-import { fileKind, fileTypeLabel, fileUrl, formatBytes, isImage } from '../lib/files'
+import { fileKind, fileTypeLabel, fileUrl, formatBytes, isImage, isVideo } from '../lib/files'
 import type { ChatMessage, FileAttachment } from '../lib/types'
 
 const props = withDefaults(
@@ -36,7 +36,10 @@ const preview = ref<FileAttachment | null>(null)
 const superseded = computed(() => props.message.meta?.superseded === true)
 const attachments = computed(() => props.message.attachments ?? [])
 const images = computed(() => attachments.value.filter((file) => isImage(file)))
-const files = computed(() => attachments.value.filter((file) => !isImage(file)))
+const videos = computed(() => attachments.value.filter((file) => isVideo(file)))
+const files = computed(() =>
+  attachments.value.filter((file) => !isImage(file) && !isVideo(file)),
+)
 const artifacts = computed(() => (props.message.role === 'assistant' ? attachments.value : []))
 const canSpeak = computed(
   () => props.message.role === 'assistant' && (!props.message.state || props.message.state === 'done') && !props.message.incomplete,
@@ -85,6 +88,29 @@ const time = computed(() => {
     </div>
     <div class="min-w-0 max-w-[min(85%,34rem)]">
       <div class="overflow-hidden rounded-2xl rounded-br-md border border-line bg-surface">
+        <!-- Video plays in place: the server answers Range requests, so a 40 MB clip starts without
+             downloading all of it. playsinline keeps iOS from hijacking the whole screen. -->
+        <div v-if="videos.length > 0" class="flex flex-col gap-2 p-1.5">
+          <figure
+            v-for="video in videos"
+            :key="video.id"
+            class="overflow-hidden rounded-xl border border-line bg-bg-deep"
+          >
+            <video
+              :src="fileUrl(video.id)"
+              controls
+              playsinline
+              preload="metadata"
+              class="max-h-72 w-full bg-black"
+              data-testid="message-video"
+            />
+            <figcaption class="flex items-center justify-between gap-2 px-2 py-1.5 text-[10.5px] text-ink/70">
+              <span class="truncate">{{ video.name }}</span>
+              <span class="shrink-0 text-ink/50">{{ humanSize(video.size) }}</span>
+            </figcaption>
+          </figure>
+        </div>
+
         <div
           v-if="images.length > 0"
           class="grid gap-1 p-1.5"

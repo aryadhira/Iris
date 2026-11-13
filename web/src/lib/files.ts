@@ -103,3 +103,8 @@ export function artifactCard(file: FileAttachment): ArtifactCardModel {
     downloadUrl: fileUrl(file.id),
   }
 }
+
+/** Video attachments get a player instead of a file row: Hermes can watch a clip, and so can Boss. */
+export function isVideo(file: { mime: string }): boolean {
+  return file.mime.startsWith('video/')
+}

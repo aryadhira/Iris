@@ -23,7 +23,14 @@ import (
 	"github.com/aryadhira/iris/internal/store"
 )
 
-const maxUploadBytes = 25 << 20
+const (
+	maxUploadBytes = 25 << 20
+	// A video is not a document. Keeping one ceiling for both meant a 26 MB clip was rejected while
+	// the product promises to send files to Hermes.
+	maxVideoBytes = 64 << 20
+	// The read loop has to accept up to the largest ceiling; the per-type limit is enforced after sniffing.
+	maxReadBytes = maxVideoBytes
+)
 
 func (s *Server) listRoomFiles(c echo.Context) error {
 	id, err := roomID(c)
@@ -105,7 +112,7 @@ func (s *Server) uploadFile(c echo.Context) error {
 				headLen += copied
 			}
 			_, _ = hash.Write(buf[:n])
-			if size <= maxUploadBytes && !writeFailed {
+			if size <= maxReadBytes && !writeFailed {
 				if _, err := out.Write(buf[:n]); err != nil {
 					writeFailed = true
 				}
@@ -128,9 +135,9 @@ func (s *Server) uploadFile(c echo.Context) error {
 		_ = os.Remove(tmp)
 		return c.JSON(http.StatusInternalServerError, errorBody("Iris tidak bisa menyimpan file itu. Coba lagi."))
 	}
-	if size > maxUploadBytes {
+	if size > maxVideoBytes {
 		_ = os.Remove(tmp)
-		return c.JSON(http.StatusRequestEntityTooLarge, errorBody(fmt.Sprintf("%s — batasnya 25 MB", files.FormatSize(size))))
+		return c.JSON(http.StatusRequestEntityTooLarge, errorBody(fmt.Sprintf("%s — batasnya 64 MB", files.FormatSize(size))))
 	}
 	if size == 0 {
 		_ = os.Remove(tmp)
@@ -141,6 +148,11 @@ func (s *Server) uploadFile(c echo.Context) error {
 	if err != nil || !files.Allowed(mimeType) {
 		_ = os.Remove(tmp)
 		return c.JSON(http.StatusUnsupportedMediaType, errorBody("tipe file ini belum didukung"))
+	}
+	// The read loop accepts up to the video ceiling; a document must still respect 25 MB.
+	if size > maxUploadBytes && !files.IsVideo(mimeType) {
+		_ = os.Remove(tmp)
+		return c.JSON(http.StatusRequestEntityTooLarge, errorBody(fmt.Sprintf("%s — batasnya 25 MB", files.FormatSize(size))))
 	}
 	if err := os.Rename(tmp, abs); err != nil {
 		_ = os.Remove(tmp)

@@ -26,6 +26,9 @@ const (
 	MIMECSV   = "text/csv"
 	MIMEJSON  = "application/json"
 	MIMEZip   = "application/zip"
+	MIMEMP4   = "video/mp4"
+	MIMEMOV   = "video/quicktime"
+	MIMEWEBM  = "video/webm"
 	MIMEOther = "application/octet-stream"
 )
 
@@ -42,6 +45,41 @@ var allowed = map[string]bool{
 	MIMECSV:  true,
 	MIMEJSON: true,
 	MIMEZip:  true,
+	MIMEMP4:  true,
+	MIMEMOV:  true,
+	MIMEWEBM: true,
+}
+
+// IsVideo reports whether an upload may use the larger video ceiling.
+func IsVideo(mimeType string) bool {
+	switch mimeType {
+	case MIMEMP4, MIMEMOV, MIMEWEBM:
+		return true
+	}
+	return false
+}
+
+// sniffVideo identifies the container formats net/http cannot: DetectContentType answers
+// application/octet-stream for every ISO base media file, so an mp4 was rejected as "not supported"
+// while it was a perfectly ordinary video.
+func sniffVideo(head []byte) string {
+	// ISO base media (mp4, m4v, mov): a box header at 0..8 whose type is "ftyp", then a brand.
+	if len(head) >= 12 && string(head[4:8]) == "ftyp" {
+		brand := string(head[8:12])
+		switch brand {
+		case "qt  ":
+			return MIMEMOV
+		case "isom", "iso2", "iso4", "iso5", "iso6", "mp41", "mp42", "avc1", "M4V ", "M4A ", "dash":
+			return MIMEMP4
+		default:
+			return MIMEMP4 // any other ftyp is still an ISO media container; ext decides mov vs mp4 below
+		}
+	}
+	// Matroska / WebM: EBML magic.
+	if len(head) >= 4 && head[0] == 0x1A && head[1] == 0x45 && head[2] == 0xDF && head[3] == 0xA3 {
+		return MIMEWEBM
+	}
+	return ""
 }
 
 // Allowed reports whether an upload of this MIME may be stored.
@@ -67,6 +105,13 @@ func DetectFile(filePath, name string) (string, error) {
 }
 
 func detect(head []byte, name, filePath string) string {
+	if video := sniffVideo(head); video != "" {
+		// A ".mov" whose brand is generic is a QuickTime file in practice.
+		if video == MIMEMP4 && strings.EqualFold(path.Ext(name), ".mov") {
+			return MIMEMOV
+		}
+		return video
+	}
 	detected := http.DetectContentType(head)
 	if mediaType, _, err := mime.ParseMediaType(detected); err == nil {
 		detected = mediaType
@@ -129,6 +174,12 @@ func HumanType(mimeType, name string) string {
 		return "WEBP"
 	case MIMEGIF:
 		return "GIF"
+	case MIMEMP4:
+		return "MP4"
+	case MIMEMOV:
+		return "MOV"
+	case MIMEWEBM:
+		return "WEBM"
 	case MIMEPDF:
 		return "PDF"
 	case MIMEDOCX:

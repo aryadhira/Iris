@@ -307,7 +307,7 @@ onMounted(autosize)
           multiple
           class="sr-only"
           data-testid="file-input"
-          accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.txt,.md,.markdown,.csv,.json,.zip,image/*,application/pdf,text/plain,text/markdown,text/csv,application/json"
+          accept=".png,.jpg,.jpeg,.webp,.gif,.mp4,.m4v,.mov,.webm,.pdf,.docx,.xlsx,.txt,.md,.markdown,.csv,.json,.zip,image/*,video/*,application/pdf,text/plain,text/markdown,text/csv,application/json"
           @change="onPicked"
         />
 

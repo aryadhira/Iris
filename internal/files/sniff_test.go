@@ -112,3 +112,65 @@ func makeZip(t *testing.T, path string, entries map[string]string) {
 		t.Fatal(err)
 	}
 }
+
+// http.DetectContentType answers application/octet-stream for every ISO base media file, which is why an
+// ordinary mp4 was rejected as "not supported". These cases pin the magic-byte path.
+func TestDetectFileRecognisesVideoByMagicBytes(t *testing.T) {
+	cases := []struct {
+		name string
+		head []byte
+		want string
+	}{
+		{"clip.mp4", ftyp("isom"), MIMEMP4},
+		{"clip.mp4", ftyp("mp42"), MIMEMP4},
+		{"clip.m4v", ftyp("M4V "), MIMEMP4},
+		{"clip.mov", ftyp("qt  "), MIMEMOV},
+		{"clip.mov", ftyp("isom"), MIMEMOV}, // generic brand with a .mov name
+		{"clip.webm", []byte{0x1A, 0x45, 0xDF, 0xA3, 0x01, 0x00, 0x00, 0x00}, MIMEWEBM},
+	}
+	for _, tc := range cases {
+		dir := t.TempDir()
+		path := filepath.Join(dir, tc.name)
+		body := append(tc.head, make([]byte, 200)...)
+		if err := os.WriteFile(path, body, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		got, err := DetectFile(path, tc.name)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if got != tc.want {
+			t.Fatalf("%s (%s): got %s, want %s", tc.name, string(tc.head[8:12]), got, tc.want)
+		}
+		if !Allowed(got) {
+			t.Fatalf("%s: %s must be allowed", tc.name, got)
+		}
+		if !IsVideo(got) {
+			t.Fatalf("%s: %s must count as video for the larger ceiling", tc.name, got)
+		}
+	}
+}
+
+func TestRandomBytesAreNotMistakenForVideo(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fake.mp4")
+	if err := os.WriteFile(path, []byte("this is not a video, it is text pretending to be one"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := DetectFile(path, "fake.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if IsVideo(got) {
+		t.Fatalf("text named .mp4 was sniffed as %s", got)
+	}
+}
+
+// ftyp builds an ISO base media header: 4-byte size, "ftyp", brand, minor version.
+func ftyp(brand string) []byte {
+	head := make([]byte, 16)
+	head[3] = 0x18
+	copy(head[4:8], "ftyp")
+	copy(head[8:12], brand)
+	return head
+}
