@@ -37,5 +37,8 @@ setelah mendengar A/B. Rollback = satu variabel.
 
 - `voice/normalise.py` tetap satu-satunya tempat yang membersihkan markdown/rahasia;
   engine menerima teks yang sudah bersih, sama seperti edge-tts.
-- Kalau voice-engine mati, `/speak` mengembalikan 500 dengan pesan dari engine —
-  sengaja tanpa fallback diam-diam ke cloud.
+- Kalau voice-engine gagal (mati/timeout/balas non-200), sidecar mencatat WARNING
+  lalu **fallback ke edge-tts** supaya Iris tidak bisu. Ini keputusan ketersediaan:
+  suara bisa berubah sesaat lebih baik daripada tidak ada suara sama sekali.
+- 2026-11-13: provider `engine` diaktifkan dengan suara `fanny-soegi`
+  (sample 20 dtk, cloning zero-shot di CPU). Rollback = `IRIS_TTS_PROVIDER=edge`.

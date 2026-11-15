@@ -735,6 +735,26 @@ func (f *fakeStore) MarkActiveRunsInterrupted(_ context.Context, updatedAt time.
 	return out, nil
 }
 
+func (f *fakeStore) MarkStaleRunsInterrupted(_ context.Context, cutoff time.Time) ([]store.Run, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]store.Run, 0)
+	for id, row := range f.runs {
+		switch row.Status {
+		case "queued", "running", "waiting_for_approval", "stopping":
+			if row.UpdatedAt.After(cutoff) {
+				continue
+			}
+			row.Status = "interrupted"
+			row.UpdatedAt = cutoff
+			row.FinishedAt = &cutoff
+			f.runs[id] = row
+			out = append(out, row)
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeStore) ListActiveRuns(_ context.Context, roomID uuid.UUID) ([]store.Run, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -163,6 +163,47 @@ func (q *Queries) MarkActiveRunsInterrupted(ctx context.Context, updatedAt time.
 	return items, nil
 }
 
+const markStaleRunsInterrupted = `-- name: MarkStaleRunsInterrupted :many
+UPDATE runs
+SET status = 'interrupted',
+    updated_at = now(),
+    finished_at = now()
+WHERE status IN ('queued', 'running', 'waiting_for_approval', 'stopping')
+  AND updated_at < $1
+RETURNING run_id, room_id, session_id, status, started_at, updated_at, finished_at
+`
+
+// A turn that has produced no activity for longer than the idle budget cannot still be alive. Reaping it
+// matters because an active run blocks the room: without this a hung turn held every message hostage
+// ("Room ini masih bekerja") until a human edited the database.
+func (q *Queries) MarkStaleRunsInterrupted(ctx context.Context, cutoff time.Time) ([]Run, error) {
+	rows, err := q.db.Query(ctx, markStaleRunsInterrupted, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Run{}
+	for rows.Next() {
+		var i Run
+		if err := rows.Scan(
+			&i.RunID,
+			&i.RoomID,
+			&i.SessionID,
+			&i.Status,
+			&i.StartedAt,
+			&i.UpdatedAt,
+			&i.FinishedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateRunStatus = `-- name: UpdateRunStatus :one
 UPDATE runs
 SET status = $2,

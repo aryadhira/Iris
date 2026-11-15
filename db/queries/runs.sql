@@ -46,3 +46,15 @@ SET status = 'interrupted',
     finished_at = $1
 WHERE status IN ('queued', 'running', 'waiting_for_approval', 'stopping')
 RETURNING *;
+
+-- name: MarkStaleRunsInterrupted :many
+-- A turn that has produced no activity for longer than the idle budget cannot still be alive. Reaping it
+-- matters because an active run blocks the room: without this a hung turn held every message hostage
+-- ("Room ini masih bekerja") until a human edited the database.
+UPDATE runs
+SET status = 'interrupted',
+    updated_at = now(),
+    finished_at = now()
+WHERE status IN ('queued', 'running', 'waiting_for_approval', 'stopping')
+  AND updated_at < sqlc.arg(cutoff)
+RETURNING *;

@@ -72,6 +72,7 @@ type Store interface {
 	ListLatestRuns(ctx context.Context) ([]store.Run, error)
 	ListActiveRuns(ctx context.Context, roomID uuid.UUID) ([]store.Run, error)
 	MarkActiveRunsInterrupted(ctx context.Context, updatedAt time.Time) ([]store.Run, error)
+	MarkStaleRunsInterrupted(ctx context.Context, cutoff time.Time) ([]store.Run, error)
 
 	UpsertApproval(ctx context.Context, arg store.UpsertApprovalParams) (store.Approval, error)
 	GetApproval(ctx context.Context, id uuid.UUID) (store.Approval, error)
@@ -219,6 +220,7 @@ func New(opts Options) *echo.Echo {
 	// A row still marked streaming can only be the remains of a process that
 	// died mid-turn. Mark it before anything reads the room.
 	s.recoverInterrupted(context.Background())
+	s.startRunReaper(context.Background())
 
 	e := echo.New()
 	e.HideBanner = true

@@ -43,9 +43,10 @@ IRIS_TTS_KEY=<key dari ~/.config/voice-engine/env>
 IRIS_TTS_ENGINE_SPEED=0.95
 ```
 
-Kalau voice-engine mati, `/speak` mengembalikan 500 dengan pesan dari engine —
-tidak ada fallback diam-diam ke cloud, supaya perilakunya bisa diprediksi.
-Kembalikan ke suara lama dengan `IRIS_TTS_PROVIDER=edge`.
+Kalau voice-engine gagal (mati, timeout, atau membalas non-200), sidecar mencatat
+WARNING di log lalu **fallback ke edge-tts** — Iris tetap bersuara, hanya suaranya
+kembali ke Gadis Neural untuk permintaan itu. Rollback permanen tetap satu baris:
+`IRIS_TTS_PROVIDER=edge` + restart.
 
 ## Streaming speech (`/speak/stream`)
 

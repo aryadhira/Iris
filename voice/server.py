@@ -208,14 +208,18 @@ class Engines:
                 payload["speed"] = ENGINE_SPEED
             headers = {"X-API-Key": ENGINE_KEY} if ENGINE_KEY else {}
             timeout = aiohttp.ClientTimeout(total=180)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(ENGINE_URL + "/v1/audio/speech", json=payload, headers=headers) as res:
-                    body = await res.read()
-                    if res.status != 200:
-                        raise RuntimeError(f"voice-engine {res.status}: {body[:200]!r}")
-                    if not body:
-                        raise RuntimeError("voice-engine mengembalikan audio kosong")
-            return body, (time.perf_counter() - started) * 1000
+            try:
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.post(ENGINE_URL + "/v1/audio/speech", json=payload, headers=headers) as res:
+                        body = await res.read()
+                        if res.status != 200:
+                            raise RuntimeError(f"voice-engine {res.status}: {body[:200]!r}")
+                        if not body:
+                            raise RuntimeError("voice-engine mengembalikan audio kosong")
+                return body, (time.perf_counter() - started) * 1000
+            except Exception as exc:  # noqa: BLE001 - ketersediaan lebih penting daripada kemurnian
+                # Iris dipakai harian; lebih baik bersuara sedikit berbeda daripada bisu.
+                log.warning("voice-engine gagal (%s) — fallback ke edge-tts %s", exc, VOICE)
         buffer = bytearray()
         async for chunk in edge_tts.Communicate(
             spoken, VOICE, rate=VOICE_RATE, pitch=VOICE_PITCH

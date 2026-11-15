@@ -202,3 +202,50 @@ func (s *Server) publishRoomEvent(roomID uuid.UUID, name string, payload any) {
 	}
 	s.hub.Publish(roomID, live.Event{Name: name, Payload: payload})
 }
+
+// staleRunAfter is comfortably past the idle watchdog: a live turn cannot be silent for this long.
+const staleRunAfter = 20 * time.Minute
+
+// startRunReaper closes runs that stopped making progress.
+//
+// A turn that hangs while irisd stays up (a gateway call that never returns, an approval that was answered in
+// a way the stream never saw) used to leave its row "running" forever. An active run blocks the room, so every
+// later message was refused with "Room ini masih bekerja" and the only cure was editing the database by hand.
+// This makes the product self-healing: the row becomes interrupted, the room says so, and the composer works.
+func (s *Server) startRunReaper(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s.reapStaleRuns(ctx)
+			}
+		}
+	}()
+}
+
+func (s *Server) reapStaleRuns(ctx context.Context) {
+	cutoff := s.now().Add(-staleRunAfter)
+	runs, err := s.store.MarkStaleRunsInterrupted(ctx, cutoff)
+	if err != nil {
+		s.logger.Error("cannot reap stale runs", "error", err)
+		return
+	}
+	if len(runs) == 0 {
+		return
+	}
+	_, _ = s.store.MarkStreamingMessagesInterrupted(ctx)
+	seen := make(map[uuid.UUID]struct{}, len(runs))
+	for _, run := range runs {
+		s.logger.Warn("reaped a stale run", "run_id", run.RunID, "room_id", run.RoomID.String(), "since", run.StartedAt)
+		if _, dup := seen[run.RoomID]; dup {
+			continue
+		}
+		seen[run.RoomID] = struct{}{}
+		s.noteSystem(ctx, run.RoomID, "giliran sebelumnya berhenti tanpa kabar selama lebih dari 20 menit, jadi Iris menutupnya. Silakan kirim lagi.")
+		s.publishRoomEvent(run.RoomID, "done", map[string]string{"messageId": ""})
+	}
+}
