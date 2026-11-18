@@ -123,6 +123,12 @@ func (c *APIClient) StreamChat(ctx context.Context, sessionID, text, instruction
 		}
 		raw := []byte(strings.Join(data, "\n"))
 		ev := normalize(eventName, raw, c.logger)
+		// Only real work postpones the watchdog. A gateway that keeps a connection warm with
+		// "event: ping" style frames is not answering the user, and counting those as progress meant a
+		// hung turn stayed "running" for 20 minutes until the reaper noticed (Boss: "Iris got timeout").
+		if !isKeepaliveEvent(eventName) {
+			resetTimer(idle)
+		}
 		eventName = ""
 		data = data[:0]
 		if ev.Kind == "approval" {
@@ -163,11 +169,9 @@ func (c *APIClient) StreamChat(ctx context.Context, sessionID, text, instruction
 			switch {
 			case strings.HasPrefix(line, "event:"):
 				eventName = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
-				resetTimer(idle)
 			case strings.HasPrefix(line, "data:"):
 				value := strings.TrimPrefix(strings.TrimPrefix(line, "data:"), " ")
 				data = append(data, value)
-				resetTimer(idle)
 			}
 		}
 	}
@@ -330,4 +334,13 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// isKeepaliveEvent reports whether an event exists only to keep the socket alive.
+func isKeepaliveEvent(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "ping", "pong", "heartbeat", "keepalive", "keep-alive", "noop", "comment":
+		return true
+	}
+	return false
 }

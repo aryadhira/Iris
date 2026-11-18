@@ -188,3 +188,33 @@ func TestStreamChatHTTPErrorIsTyped(t *testing.T) {
 		t.Fatal("error leaked the API key")
 	}
 }
+
+// A gateway that holds the connection open with heartbeat frames while producing nothing used to look like a
+// live turn: every "event:" line reset the watchdog, so a hung run survived until the 20-minute reaper.
+func TestStreamChatIdleWatchdogIsNotFedByPingEvents(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		// 40 pings, one every 25ms: 1s of "activity" with no work at all.
+		for i := 0; i < 40; i++ {
+			fmt.Fprint(w, "event: ping\ndata: {}\n\n")
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+	}))
+	defer srv.Close()
+
+	client := New(srv.URL, "k", testLogger())
+	client.SetIdleTimeout(250 * time.Millisecond)
+
+	start := time.Now()
+	err := client.StreamChat(context.Background(), "api_1", "hi", "", func(Event) error { return nil })
+	if !errors.Is(err, ErrIdle) {
+		t.Fatalf("error = %v, want ErrIdle: pings must not count as work", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("watchdog fired after %s, want ~250ms", elapsed)
+	}
+}

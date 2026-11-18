@@ -52,3 +52,28 @@ room   Tes koneksi… → "Tes."
 The hang itself is Hermes-side: `vision_analyze` on an mp4 never returned, and that is what produced the first
 zombie. The reaper keeps Iris usable, but it treats the symptom; frame extraction before handing a video to a
 still-image tool is the real cure.
+
+## Follow-up: why the watchdog let a dead turn look alive for 20 minutes
+
+Boss: "last message is taking long time, so Iris got timeout and not sending the response … room said idle".
+
+The evidence: the run in room `9d9ff321` started 21:52:57, the client left at 21:55:30, **the assistant row stayed 0
+bytes**, and the reaper closed it at 22:13:06 (20 minutes). The Hermes session for that room had **message_count
+0** — the turn never produced anything at all. A probe run against the gateway afterwards completed in under 8 s,
+so the gateway was not wedged; that one request died upstream.
+
+**The Iris bug underneath it:** the SSE idle watchdog was reset by *any* `event:` or `data:` line, including
+heartbeat-style frames. A gateway that keeps a socket warm while producing nothing therefore looked like work in
+progress, so the 10-minute watchdog never fired and only the 20-minute reaper noticed.
+
+Fix: the watchdog is now reset only when a dispatched event is not a keepalive (`ping`, `pong`, `heartbeat`,
+`keepalive`, `noop`, `comment`). Test: 40 ping frames over one second with a 250 ms budget must raise `ErrIdle`,
+and it does (1.01 s wall time including setup).
+
+Net effect: a turn that produces nothing now fails at the idle budget with an honest error instead of sitting at
+"bekerja" for twenty minutes and then going quiet.
+
+Verified after deploy: the affected room answered a fresh message in 8 s —
+`done | "Siap, Boss — watchdog sudah jalan dan saya merespons normal."`
+
+14 Go packages ok.
