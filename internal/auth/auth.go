@@ -3,6 +3,8 @@
 package auth
 
 import (
+	"fmt"
+	"strconv"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -42,6 +44,7 @@ type Service struct {
 	store        SessionStore
 	passHash     [sha256.Size]byte
 	cookieSecure bool
+	limiter      *attemptLimiter
 	logger       *slog.Logger
 }
 
@@ -54,6 +57,7 @@ func New(st SessionStore, passphrase string, cookieSecure bool, logger *slog.Log
 		store:        st,
 		passHash:     sha256.Sum256([]byte(passphrase)),
 		cookieSecure: cookieSecure,
+		limiter:      newAttemptLimiter(),
 		logger:       logger,
 	}
 }
@@ -70,11 +74,20 @@ func (s *Service) Login(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, errorBody("Send your passphrase to sign in."))
 	}
 
+	key := clientKey(c.Request())
+	if blocked, wait := s.limiter.blocked(key); blocked {
+		c.Response().Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
+		return c.JSON(http.StatusTooManyRequests, errorBody(
+			"Terlalu banyak percobaan masuk. Coba lagi dalam "+humanWait(wait)+"."))
+	}
+
 	submitted := sha256.Sum256([]byte(req.Passphrase))
 	if subtle.ConstantTimeCompare(submitted[:], s.passHash[:]) != 1 {
+		s.limiter.fail(key)
 		time.Sleep(wrongPassphraseDelay)
 		return c.JSON(http.StatusUnauthorized, errorBody("That passphrase is not correct."))
 	}
+	s.limiter.reset(key)
 
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
@@ -179,4 +192,13 @@ func truncate(v string, max int) string {
 		return v
 	}
 	return strings.ToValidUTF8(v[:max], "")
+}
+
+// humanWait phrases a lockout the way a person would say it.
+func humanWait(d time.Duration) string {
+	minutes := int(d.Minutes()) + 1
+	if minutes <= 1 {
+		return "semenit"
+	}
+	return fmt.Sprintf("%d menit", minutes)
 }
