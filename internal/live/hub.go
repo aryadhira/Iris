@@ -9,8 +9,11 @@ package live
 
 import (
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/aryadhira/iris/internal/turntrace"
 )
 
 // Event is one typed SSE frame owned by a room.
@@ -23,6 +26,14 @@ type Event struct {
 // the persisted run, approvals and reminders.
 type Snapshot struct {
 	Partial string
+	// Steps are the in-flight working log at the instant of subscription. A
+	// phone returning from the background sees the same list as the laptop.
+	Steps []turntrace.Step
+	// LastEventAgeMs is how long the turn had been silent when the snapshot was
+	// taken. The panel starts its "menunggu" clock from this, not from zero.
+	LastEventAgeMs int64
+	// Active is true while a turn owns the room.
+	Active bool
 }
 
 // DefaultBuffer is enough for a fast reader to survive a burst of deltas. When
@@ -34,8 +45,11 @@ type subscriber struct {
 }
 
 type room struct {
-	subs    map[*subscriber]struct{}
-	partial string
+	subs        map[*subscriber]struct{}
+	partial     string
+	steps       []turntrace.Step
+	active      bool
+	lastEventAt time.Time
 }
 
 // Hub fans events out to every client attached to a room.
@@ -79,7 +93,12 @@ func (h *Hub) Subscribe(id uuid.UUID) (Snapshot, <-chan Event, func()) {
 	r := h.roomLocked(id)
 	sub := &subscriber{ch: make(chan Event, h.buf)}
 	r.subs[sub] = struct{}{}
-	snapshot := Snapshot{Partial: r.partial}
+	snapshot := Snapshot{
+		Partial:        r.partial,
+		Steps:          append([]turntrace.Step(nil), r.steps...),
+		LastEventAgeMs: ageMs(r),
+		Active:         r.active,
+	}
 	h.mu.Unlock()
 
 	var once sync.Once
@@ -91,7 +110,7 @@ func (h *Hub) Subscribe(id uuid.UUID) (Snapshot, <-chan Event, func()) {
 					delete(current.subs, sub)
 					close(sub.ch)
 				}
-				if len(current.subs) == 0 && current.partial == "" {
+				if len(current.subs) == 0 && current.partial == "" && len(current.steps) == 0 {
 					delete(h.rooms, id)
 				}
 			}
@@ -113,6 +132,10 @@ func (h *Hub) Publish(id uuid.UUID, ev Event) {
 	if r == nil {
 		return
 	}
+	// A heartbeat is not work: counting it would make a stalled turn look fresh.
+	if ev.Name != "activity" {
+		r.lastEventAt = time.Now()
+	}
 	for sub := range r.subs {
 		select {
 		case sub.ch <- ev:
@@ -121,6 +144,89 @@ func (h *Hub) Publish(id uuid.UUID, ev Event) {
 			close(sub.ch)
 		}
 	}
+}
+
+// PublishStep stores a step and fans it out. Storing before publishing is what
+// makes a snapshot taken a microsecond later include it exactly once.
+func (h *Hub) PublishStep(id uuid.UUID, step turntrace.Step) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	r := h.roomLocked(id)
+	updated := false
+	for i := range r.steps {
+		if r.steps[i].Seq == step.Seq {
+			r.steps[i] = step
+			updated = true
+			break
+		}
+	}
+	if !updated {
+		r.steps = append(r.steps, step)
+	}
+	r.lastEventAt = time.Now()
+	h.publishLocked(r, Event{Name: "step", Payload: step})
+}
+
+// BeginTurn starts a fresh working log. It never touches the subscriber list.
+func (h *Hub) BeginTurn(id uuid.UUID) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	r := h.roomLocked(id)
+	r.partial = ""
+	r.steps = nil
+	r.active = true
+	r.lastEventAt = time.Now()
+}
+
+// TurnState returns the in-flight steps and the age of the last real event.
+// ok is false when no turn owns the room.
+func (h *Hub) TurnState(id uuid.UUID) ([]turntrace.Step, time.Duration, bool) {
+	if h == nil {
+		return nil, 0, false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	r := h.rooms[id]
+	if r == nil || !r.active {
+		return nil, 0, false
+	}
+	return append([]turntrace.Step(nil), r.steps...), age(r), true
+}
+
+// Activity reports the silence age while a turn is live. It is the honest
+// heartbeat: no subscriber, no frame, and no reset unless something happened.
+func (h *Hub) Activity(id uuid.UUID) (time.Duration, bool) {
+	if h == nil {
+		return 0, false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	r := h.rooms[id]
+	if r == nil || !r.active {
+		return 0, false
+	}
+	return age(r), true
+}
+
+func age(r *room) time.Duration {
+	if r == nil || r.lastEventAt.IsZero() {
+		return 0
+	}
+	d := time.Since(r.lastEventAt)
+	if d < 0 {
+		return 0
+	}
+	return d
+}
+
+func ageMs(r *room) int64 {
+	return age(r).Milliseconds()
 }
 
 // Append adds visible text to the room's partial reply and publishes it as one
@@ -134,6 +240,7 @@ func (h *Hub) Append(id uuid.UUID, text string) {
 	defer h.mu.Unlock()
 	r := h.roomLocked(id)
 	r.partial += text
+	r.lastEventAt = time.Now()
 	h.publishLocked(r, Event{Name: "delta", Payload: map[string]string{"text": text}})
 }
 
@@ -158,10 +265,11 @@ func (h *Hub) SetPartial(id uuid.UUID, text string) {
 	defer h.mu.Unlock()
 	r := h.roomLocked(id)
 	r.partial = text
+	r.lastEventAt = time.Now()
 }
 
-// Reset clears the partial text at the start of a new turn. It does not emit a
-// frame; the snapshot of a reattaching client must not inherit yesterday's text.
+// Reset clears the in-flight view at the end of a turn. It does not emit a
+// frame; the stored message (with its steps) is the history a client reads.
 func (h *Hub) Reset(id uuid.UUID) {
 	if h == nil {
 		return
@@ -170,6 +278,9 @@ func (h *Hub) Reset(id uuid.UUID) {
 	defer h.mu.Unlock()
 	if r := h.rooms[id]; r != nil {
 		r.partial = ""
+		r.steps = nil
+		r.active = false
+		r.lastEventAt = time.Time{}
 		if len(r.subs) == 0 {
 			delete(h.rooms, id)
 		}

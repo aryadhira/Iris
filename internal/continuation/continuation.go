@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/aryadhira/iris/internal/turntrace"
 )
 
 const (
@@ -28,15 +30,20 @@ type Tool struct {
 
 // Meta is stored on the assistant message row.
 type Meta struct {
-	Procs      []string `json:"procs,omitempty"`
-	Tools      []Tool   `json:"tools,omitempty"`
-	StatusLine string   `json:"statusLine,omitempty"`
+	Procs      []string         `json:"procs,omitempty"`
+	Tools      []Tool           `json:"tools,omitempty"`
+	Steps      []turntrace.Step `json:"steps,omitempty"`
+	StatusLine string           `json:"statusLine,omitempty"`
+	// Reasoning is the capped private working text. It is stored here, never in
+	// the message body, so search, export and speech cannot reach it.
+	Reasoning string `json:"reasoning,omitempty"`
 }
 
 // Empty reports whether the row has nothing worth showing. An empty timeline
 // must render nothing, never a placeholder row.
 func (m Meta) Empty() bool {
-	return len(m.Procs) == 0 && len(m.Tools) == 0 && m.StatusLine == ""
+	return len(m.Procs) == 0 && len(m.Tools) == 0 && len(m.Steps) == 0 &&
+		m.StatusLine == "" && m.Reasoning == ""
 }
 
 // Status is the agent's own final line. It is a claim, not proof.

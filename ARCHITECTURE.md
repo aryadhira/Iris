@@ -75,10 +75,18 @@ that started it. Publishing is non-blocking; a subscriber whose queue is full is
 can reattach for a fresh snapshot. The POST still streams for compatibility, but it is now just another
 subscriber, so the phone and the laptop cannot disagree about what happened.
 
-An SSE attachment receives a `snapshot` first (`run`, `partial`, `approvals`, `reminders_due`), then live
-`delta`, `tool`, `approval`, `approval.resolved`, `note` and `done` frames, with a comment every 15 s. The
-snapshot is taken under the same lock that appends delta text, so text already streamed appears once: in the
-snapshot or in a delta, never both.
+An SSE attachment receives a `snapshot` first (`run`, `partial`, `approvals`, `reminders_due`, `steps`,
+`last_event_age_ms`), then live `delta`, `step`, `activity`, `tool`, `approval`, `approval.resolved`, `note`
+and `done` frames, with a comment every 15 s. The snapshot is taken under the same lock that appends delta
+text and steps, so work already streamed appears once: in the snapshot or in a frame, never both.
+
+A turn's working log is `meta.steps`: `{seq, kind: thinking|tool|plan|status, name, detail, status}` with
+gateway timestamps and real durations. Hermes sends thinking as a completed `tool.progress/_thinking` block
+(≤500 chars) and the private reasoning on the terminal payload; irisd never appends either to `body`. The
+bounded excerpt lives at `meta.reasoning` (≤4 KB), outside search, export and speech. `activity` is the
+silence heartbeat: it carries the age of the last real event and never resets itself, which lets the panel
+say `menunggu Hermes…` without inventing progress. A finished turn's steps are read from the message, not
+from the live hub.
 
 The assistant row is created when the turn starts with `state = 'streaming'`, updated every ~2 s or ~400
 characters, and finalised through the reply cleaner with `state = 'done'`. If irisd dies mid-turn, the row is

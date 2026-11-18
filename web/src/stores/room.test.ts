@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createRoomStore, type RoomStoreDeps } from './room'
-import type { Approval, StoredMessage } from '../lib/types'
+import type { Approval, MessageMeta, StoredMessage } from '../lib/types'
 
 const ROOM = 'room-1'
 
@@ -186,6 +186,106 @@ describe('room store', () => {
     expect(store.state.phase).toBe('idle')
     expect(store.state.messages.some((m) => m.id === 'a2')).toBe(true)
     store.dispose()
+  })
+
+  it('takes in-flight steps from the snapshot and updates them by seq', async () => {
+    const { deps } = makeDeps({ list: [[stored('u1', 'user', 'halo', 1)]], stream: [] })
+    const step = {
+      seq: 1,
+      kind: 'tool',
+      name: 'terminal',
+      detail: 'sleep 3',
+      status: 'running',
+      startedAt: '2026-11-12T10:59:58Z',
+      durationMs: 0,
+    }
+    let calls = 0
+    deps.openEvents = async () => {
+      calls += 1
+      if (calls > 1) return new Promise<Response>(() => {})
+      return new Response(
+        sse([
+          `event: snapshot\ndata: ${JSON.stringify({
+            run: {
+              id: 'run-1',
+              status: 'running',
+              started_at: '2026-11-12T10:59:58Z',
+              continuation: 0,
+            },
+            partial: '',
+            approvals: [],
+            steps: [step],
+            last_event_age_ms: 4000,
+          })}\n\n`,
+          `event: step\ndata: ${JSON.stringify({
+            ...step,
+            status: 'ok',
+            durationMs: 1250,
+            endedAt: '2026-11-12T11:00:00Z',
+          })}\n\n`,
+          'event: activity\ndata: {"ageMs":21000}\n\n',
+        ]),
+        { status: 200 },
+      )
+    }
+    const store = createRoomStore(ROOM, deps)
+    await store.load()
+    store.startLive()
+    await tick()
+    await tick()
+    expect(store.state.steps).toHaveLength(1)
+    expect(store.state.steps[0].status).toBe('ok')
+    expect(store.state.steps[0].durationMs).toBe(1250)
+    expect(store.state.activityAgeMs).toBe(21000)
+    store.dispose()
+  })
+
+  it('folds the live steps into the stored message exactly once', async () => {
+    const meta: MessageMeta = {
+      steps: [
+        {
+          seq: 1,
+          kind: 'thinking',
+          name: 'berpikir',
+          detail: 'memeriksa',
+          status: 'ok',
+          startedAt: '2026-11-12T11:00:00Z',
+          endedAt: '2026-11-12T11:00:01Z',
+          durationMs: 1000,
+        },
+        {
+          seq: 2,
+          kind: 'tool',
+          name: 'terminal',
+          detail: 'printf x',
+          status: 'ok',
+          startedAt: '2026-11-12T11:00:01Z',
+          endedAt: '2026-11-12T11:00:02Z',
+          durationMs: 1250,
+        },
+      ],
+    }
+    const final: StoredMessage = {
+      ...stored('a2', 'assistant', 'selesai', 9),
+      state: 'done',
+      meta,
+    }
+    const { deps } = makeDeps({
+      list: [[stored('u1', 'user', 'halo', 1)], [final, stored('u1', 'user', 'halo', 1)]],
+      stream: [
+        'event: step\ndata: {"seq":1,"kind":"thinking","name":"berpikir","detail":"memeriksa","status":"running","startedAt":"2026-11-12T11:00:00Z","durationMs":0}\n\n',
+        'event: step\ndata: {"seq":2,"kind":"tool","name":"terminal","detail":"printf x","status":"running","startedAt":"2026-11-12T11:00:01Z","durationMs":0}\n\n',
+        'event: delta\ndata: {"text":"selesai"}\n\n',
+        'event: done\ndata: {"messageId":"a2"}\n\n',
+      ],
+    })
+    const store = createRoomStore(ROOM, deps)
+    await store.load()
+    await store.send('halo')
+    expect(store.state.steps).toEqual([])
+    const assistant = store.state.messages.find((message) => message.id === 'a2')
+    expect(assistant?.meta?.steps).toHaveLength(2)
+    expect(assistant?.meta?.steps?.map((row) => row.seq)).toEqual([1, 2])
   })
 
   it('re-opens a zombie stream instead of waiting on it forever', async () => {

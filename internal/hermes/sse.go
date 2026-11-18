@@ -202,9 +202,16 @@ func normalize(name string, raw []byte, logger *slog.Logger) Event {
 		Error       string          `json:"error"`
 		Message     string          `json:"message"`
 		Detail      string          `json:"detail"`
+		Preview     string          `json:"preview"`
 		TS          float64         `json:"ts"`
 		Usage       json.RawMessage `json:"usage"`
 		Runtime     *Runtime        `json:"runtime"`
+		// Terminal payloads carry the turn's transcript. Reasoning is the only
+		// part of it Iris keeps, and only as a capped private excerpt.
+		Messages []struct {
+			Reasoning        string `json:"reasoning"`
+			ReasoningContent string `json:"reasoning_content"`
+		} `json:"messages"`
 	}
 	_ = json.Unmarshal(raw, &p)
 
@@ -212,8 +219,10 @@ func normalize(name string, raw []byte, logger *slog.Logger) Event {
 	ev.RunID = p.RunID
 	ev.MessageID = p.MessageID
 	ev.TS = p.TS
+	ev.Preview = p.Preview
 	ev.Usage = parseUsage(p.Usage)
 	ev.Runtime = runtimeOf(p.Runtime, ev.Usage)
+	ev.Reasoning = reasoningOf(p.Messages)
 
 	switch {
 	case name == "assistant.delta":
@@ -224,6 +233,13 @@ func normalize(name string, raw []byte, logger *slog.Logger) Event {
 	case name == "assistant.completed" || name == "run.completed" || name == "done":
 		ev.Kind = "done"
 		ev.Text = p.Content
+	case name == "tool.progress" && firstNonEmpty(p.ToolName, p.Name, p.Tool) == "_thinking":
+		// This build has no token-level reasoning deltas on the session stream:
+		// a completed reasoning block arrives as tool.progress/_thinking. It is
+		// a thinking step, never reply text.
+		ev.Kind = "thinking"
+		ev.Name = "_thinking"
+		ev.Text = p.Delta
 	case name == "tool" || strings.HasPrefix(name, "tool."):
 		ev.Kind = "tool"
 		ev.Name = firstNonEmpty(p.ToolName, p.Name, p.Tool)
@@ -295,6 +311,31 @@ func runtimeOf(top *Runtime, usage *Usage) Runtime {
 		return usage.runtime
 	}
 	return Runtime{}
+}
+
+// reasoningOf collects the distinct reasoning blocks on a terminal transcript.
+// Some builds name the same block twice (reasoning and reasoning_content), so
+// duplicates are removed rather than shown twice.
+func reasoningOf(messages []struct {
+	Reasoning        string `json:"reasoning"`
+	ReasoningContent string `json:"reasoning_content"`
+}) string {
+	seen := make(map[string]struct{}, len(messages))
+	parts := make([]string, 0, len(messages))
+	for _, message := range messages {
+		for _, text := range []string{message.Reasoning, message.ReasoningContent} {
+			text = strings.TrimSpace(text)
+			if text == "" {
+				continue
+			}
+			if _, ok := seen[text]; ok {
+				continue
+			}
+			seen[text] = struct{}{}
+			parts = append(parts, text)
+		}
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 func numberValue(value *json.Number) int64 {

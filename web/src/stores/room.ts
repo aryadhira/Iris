@@ -9,6 +9,7 @@ import type {
   ChatMessage,
   Continuation,
   FileAttachment,
+  ProgressStep,
   RoomRun,
   StoredMessage,
   TurnPhase,
@@ -89,6 +90,8 @@ export interface LiveSnapshot {
   partial?: string
   approvals?: Approval[]
   reminders_due?: number
+  steps?: ProgressStep[]
+  last_event_age_ms?: number
 }
 
 export interface RoomStoreOptions {
@@ -116,6 +119,12 @@ export function createRoomStore(
     run: (options.run ?? null) as RoomRun | null,
     streamingText: '',
     currentTool: '',
+    // The live working log. Persisted on the message at the end; cleared here
+    // when the turn settles so the card folds into the stored timeline once.
+    steps: [] as ProgressStep[],
+    /** Age of the last real event at the moment the last activity frame arrived. */
+    activityAgeMs: 0,
+    activityAt: 0,
     turnStartedAt: 0,
     errorText: '',
     connectionLost: false,
@@ -157,10 +166,33 @@ export function createRoomStore(
 
   applyRun(options.run ?? null)
 
+  function resetSteps(): void {
+    state.steps = []
+    state.activityAgeMs = 0
+    state.activityAt = 0
+  }
+
+  /** A delta, a tool or a step is real work: the silence clock starts again. */
+  function noteActivity(): void {
+    state.activityAgeMs = 0
+    state.activityAt = d.now()
+  }
+
+  /** Steps are addressed by seq; a later frame corrects the same row. */
+  function upsertStep(step: ProgressStep): void {
+    const index = state.steps.findIndex((row) => row.seq === step.seq)
+    if (index === -1) {
+      state.steps = [...state.steps, step].sort((a, b) => a.seq - b.seq)
+    } else {
+      state.steps[index] = step
+    }
+  }
+
   function resetTurn(): void {
     cleaner = null
     state.streamingText = ''
     state.currentTool = ''
+    resetSteps()
     state.turnStartedAt = 0
     state.connectionLost = false
     if (state.phase !== 'error') state.phase = 'idle'
@@ -323,6 +355,8 @@ export function createRoomStore(
     state.phase = 'streaming'
     state.streamingText = ''
     state.currentTool = ''
+    resetSteps()
+    noteActivity()
     state.turnStartedAt = d.now()
     cleaner = new ReplyStream()
 
@@ -394,6 +428,8 @@ export function createRoomStore(
     state.phase = 'streaming'
     state.streamingText = ''
     state.currentTool = ''
+    resetSteps()
+    noteActivity()
     state.turnStartedAt = d.now()
     cleaner = new ReplyStream()
 
@@ -558,6 +594,11 @@ export function createRoomStore(
         for (const approval of payload.approvals ?? []) upsertApproval(approval)
         if (isRunLive(payload.run)) {
           state.streamingText = payload.partial ?? ''
+          state.steps = (payload.steps ?? [])
+            .slice()
+            .sort((a, b) => a.seq - b.seq)
+          state.activityAgeMs = Math.max(0, payload.last_event_age_ms ?? 0)
+          state.activityAt = d.now()
           state.phase = 'streaming'
           state.connectionLost = false
           const started = payload.run ? Date.parse(payload.run.started_at) : NaN
@@ -568,6 +609,7 @@ export function createRoomStore(
             state.phase = state.errorText === '' ? 'idle' : 'error'
           }
           state.currentTool = ''
+          resetSteps()
           state.turnStartedAt = 0
           state.connectionLost = false
           // A reconnect can land after the one `done` frame was published. The
@@ -585,7 +627,22 @@ export function createRoomStore(
           state.run = payload.run
           state.phase = 'streaming'
           if (state.turnStartedAt === 0) state.turnStartedAt = d.now()
+          noteActivity()
         }
+        return
+      }
+      case 'step': {
+        const payload = frameJson<ProgressStep>(frame)
+        if (payload?.seq) {
+          upsertStep(payload)
+          noteActivity()
+        }
+        return
+      }
+      case 'activity': {
+        const payload = frameJson<{ ageMs?: number }>(frame)
+        state.activityAgeMs = Math.max(0, payload?.ageMs ?? 0)
+        state.activityAt = d.now()
         return
       }
       case 'delta': {
@@ -596,12 +653,14 @@ export function createRoomStore(
           state.streamingText += payload.text
           state.phase = 'streaming'
           if (state.turnStartedAt === 0) state.turnStartedAt = d.now()
+          noteActivity()
         }
         return
       }
       case 'tool': {
         const payload = frameJson<{ name?: string; status?: string }>(frame)
         if (payload?.name) state.currentTool = payload.name
+        noteActivity()
         return
       }
       case 'approval':
@@ -638,6 +697,7 @@ export function createRoomStore(
         const payload = frameJson<{ message?: string }>(frame)
         state.errorText = humanizeServerError(payload?.message ?? '')
         state.currentTool = ''
+        resetSteps()
         state.turnStartedAt = 0
         state.phase = 'error'
         return
@@ -652,6 +712,7 @@ export function createRoomStore(
     cleaner = null
     state.streamingText = ''
     state.currentTool = ''
+    resetSteps()
     state.turnStartedAt = 0
     state.connectionLost = false
     state.run = null
@@ -729,11 +790,26 @@ export function createRoomStore(
 
   function handleFrame(frame: SseFrame): boolean {
     switch (frame.event) {
+      case 'step': {
+        const payload = frameJson<ProgressStep>(frame)
+        if (payload?.seq) {
+          upsertStep(payload)
+          noteActivity()
+        }
+        return false
+      }
+      case 'activity': {
+        const payload = frameJson<{ ageMs?: number }>(frame)
+        state.activityAgeMs = Math.max(0, payload?.ageMs ?? 0)
+        state.activityAt = d.now()
+        return false
+      }
       case 'delta': {
         const payload = frameJson<{ text?: string }>(frame)
         if (payload?.text) {
           if (state.phase !== 'streaming') state.phase = 'streaming'
           if (state.turnStartedAt === 0) state.turnStartedAt = d.now()
+          noteActivity()
           if (!cleaner) cleaner = new ReplyStream()
           const visible = cleaner.feed(payload.text)
           if (visible !== '') state.streamingText += visible
@@ -743,6 +819,7 @@ export function createRoomStore(
       case 'tool': {
         const payload = frameJson<{ name?: string; status?: string }>(frame)
         if (payload?.name) state.currentTool = payload.name
+        noteActivity()
         return false
       }
       case 'approval': {
@@ -771,6 +848,7 @@ export function createRoomStore(
         const payload = frameJson<{ message?: string }>(frame)
         state.errorText = humanizeServerError(payload?.message ?? '')
         state.currentTool = ''
+        resetSteps()
         state.turnStartedAt = 0
         state.phase = 'error'
         return true
@@ -794,6 +872,7 @@ export function createRoomStore(
     cleaner = null
     state.streamingText = ''
     state.currentTool = ''
+    resetSteps()
     state.turnStartedAt = 0
     state.connectionLost = false
     state.run = null
@@ -823,6 +902,7 @@ export function createRoomStore(
         cleaner = null
         state.streamingText = ''
         state.currentTool = ''
+        resetSteps()
         state.turnStartedAt = 0
         state.connectionLost = false
         state.run = null
@@ -866,6 +946,7 @@ export function createRoomStore(
           cleaner = null
           state.streamingText = ''
           state.currentTool = ''
+          resetSteps()
           state.turnStartedAt = 0
           state.connectionLost = false
           state.errorText = ''
@@ -878,6 +959,7 @@ export function createRoomStore(
     }
 
     state.connectionLost = false
+    resetSteps()
     state.turnStartedAt = 0
     state.errorText =
       'Koneksi terputus. Giliran ini mungkin masih berjalan di server — muat ulang room untuk memeriksa.'

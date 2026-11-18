@@ -18,6 +18,7 @@ import (
 	"github.com/aryadhira/iris/internal/reply"
 	"github.com/aryadhira/iris/internal/rooms"
 	"github.com/aryadhira/iris/internal/store"
+	"github.com/aryadhira/iris/internal/turntrace"
 )
 
 // turnOutcome is everything a finished turn hands to persistence and to the
@@ -128,6 +129,7 @@ func (s *Server) runTurn(
 		runtime       hermes.Runtime
 	)
 	trace := newToolTrace()
+	steps := turntrace.NewTracker()
 	currentTool := ""
 	// The live stream is cleaned as it arrives. The parser still sees the raw
 	// text below, so a STATUS line is never lost to the pump just because the
@@ -142,7 +144,11 @@ func (s *Server) runTurn(
 				onRunID(runID)
 			}
 		}
-		trace.observe(ev, s.now())
+		at := s.now()
+		trace.observe(ev, at)
+		for _, step := range steps.Observe(ev, at) {
+			sendEvent(emit, "step", step)
+		}
 		switch ev.Kind {
 		case "delta":
 			assistant.WriteString(ev.Text)
@@ -165,7 +171,11 @@ func (s *Server) runTurn(
 			if status == "" {
 				status = "running"
 			}
-			sendEvent(emit, "tool", map[string]string{"name": name, "status": status})
+			sendEvent(emit, "tool", map[string]string{
+				"name":   name,
+				"status": status,
+				"detail": turntrace.ToolDetail(ev.Preview),
+			})
 		case "approval":
 			toolName := ev.Name
 			if toolName == "" {
@@ -237,6 +247,9 @@ func (s *Server) runTurn(
 	trace.procs = continuation.AppendProcs(trace.procs, continuation.ExtractProcs(rawBody)...)
 	trace.procs = continuation.AppendProcs(trace.procs, continuation.ExtractProcs(finalText)...)
 	trace.finish(s.now())
+	for _, step := range steps.Finish(s.now()) {
+		sendEvent(emit, "step", step)
+	}
 
 	_, statusLine := continuation.ParseStatus(rawBody)
 	if statusLine == "" && finalText != "" {
@@ -263,7 +276,9 @@ func (s *Server) runTurn(
 		meta: continuation.Meta{
 			Procs:      trace.procs,
 			Tools:      trace.tools,
+			Steps:      steps.Steps(),
 			StatusLine: statusLine,
+			Reasoning:  steps.Reasoning(),
 		},
 	}, streamErr
 }

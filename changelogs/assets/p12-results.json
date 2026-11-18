@@ -1,0 +1,72 @@
+[
+  {
+    "scope": "390",
+    "name": "room opened at 390x844",
+    "pass": true,
+    "detail": "",
+    "at": "2026-11-18T16:14:07.968Z"
+  },
+  {
+    "scope": "390",
+    "name": "the panel says Hermes bekerja with an elapsed clock",
+    "pass": true,
+    "detail": "Hermes bekerja · 0:14",
+    "at": "2026-11-18T16:14:22.619Z"
+  },
+  {
+    "scope": "390",
+    "name": "at least two step rows are visible",
+    "pass": true,
+    "detail": "2 rows",
+    "at": "2026-11-18T16:14:22.619Z"
+  },
+  {
+    "scope": "390",
+    "name": "each visible step has a name or thinking excerpt and a duration",
+    "pass": true,
+    "detail": "[{\"kind\":\"tool\",\"status\":\"ok\",\"text\":\"Menjalankan perintah 5.9s\",\"duration\":\"5.9s\",\"scrollWidth\":340,\"clientWidth\":340},{\"kind\":\"tool\",\"status\":\"ok\",\"text\":\"Membaca berkas 4ms\",\"duration\":\"4ms\",\"scrollWidth\":340,\"clientWidth\":340}]",
+    "at": "2026-11-18T16:14:22.619Z"
+  },
+  {
+    "scope": "390",
+    "name": "no step row overflows horizontally",
+    "pass": true,
+    "detail": "",
+    "at": "2026-11-18T16:14:22.620Z"
+  },
+  {
+    "scope": "390",
+    "name": "the progress panel is gone when the turn ends",
+    "pass": true,
+    "detail": "",
+    "at": "2026-11-18T16:14:24.862Z"
+  },
+  {
+    "scope": "390",
+    "name": "the stored timeline carries the steps",
+    "pass": true,
+    "detail": "3 rows",
+    "at": "2026-11-18T16:14:24.865Z"
+  },
+  {
+    "scope": "390",
+    "name": "the panel folded into the timeline without a duplicate list",
+    "pass": true,
+    "detail": "timeline rows=3",
+    "at": "2026-11-18T16:14:24.866Z"
+  },
+  {
+    "scope": "390",
+    "name": "the visible mid-turn kinds are a prefix of the stored kinds",
+    "pass": true,
+    "detail": "tool,tool vs tool,tool,thinking",
+    "at": "2026-11-18T16:14:24.867Z"
+  },
+  {
+    "scope": "390",
+    "name": "screenshots captured",
+    "pass": true,
+    "detail": "/home/aryadhira/Documents/projects/iris/changelogs/assets/p12-390-mid-turn.png, /home/aryadhira/Documents/projects/iris/changelogs/assets/p12-390-finished.png",
+    "at": "2026-11-18T16:14:24.999Z"
+  }
+]

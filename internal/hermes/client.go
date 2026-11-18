@@ -10,8 +10,8 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"os"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -45,7 +45,7 @@ type Runtime struct {
 // with Kind == "unknown" and the original payload in Raw; they never abort a
 // turn.
 type Event struct {
-	Kind         string // started, delta, tool, done, error, unknown
+	Kind         string // started, delta, thinking, tool, done, error, unknown
 	OriginalKind string
 	SessionID    string
 	RunID        string
@@ -53,6 +53,13 @@ type Event struct {
 	Text         string
 	Name         string
 	Status       string
+	// Preview is the gateway's own short rendering of a tool call (for example
+	// "printf 'x' + 1 command"). It is the only detail Iris stores: the raw
+	// args object can carry secrets and is never persisted.
+	Preview string
+	// Reasoning is the private working text Hermes reports on the terminal
+	// payload (run.completed messages[].reasoning). It never becomes the reply.
+	Reasoning string
 	// TS is the gateway timestamp in Unix seconds when present. Tool durations
 	// come from the real stream clock, not from when irisd happened to read a line.
 	TS  float64

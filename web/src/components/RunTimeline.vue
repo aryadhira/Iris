@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { PhCaretRight } from '@phosphor-icons/vue'
-import { durationLabel, timelineRows } from '../lib/timeline'
+import { compactDuration, durationLabel, timelineRows } from '../lib/timeline'
 import type { MessageMeta } from '../lib/types'
 
 const props = defineProps<{ meta?: MessageMeta; runId?: string }>()
 const rows = computed(() => timelineRows(props.meta))
+const usesSteps = computed(() => (props.meta?.steps?.length ?? 0) > 0)
 </script>
 
 <template>
@@ -29,15 +30,28 @@ const rows = computed(() => timelineRows(props.meta))
     </p>
     <ol class="mt-1.5 space-y-1 border-l border-line pl-3" data-testid="run-timeline-list">
       <li
-        v-for="(row, index) in rows"
-        :key="`${row.name}-${index}`"
-        class="flex flex-wrap items-baseline gap-x-2 text-[11.5px] leading-snug"
+        v-for="row in rows"
+        :key="row.key"
+        class="flex min-w-0 items-baseline gap-x-2 text-[11.5px] leading-snug"
+        :class="row.failed ? 'text-red-300' : ''"
         :data-status="row.status"
+        :data-kind="row.kind"
       >
-        <span class="text-muted">{{ row.label }}</span>
-        <span class="text-quiet">{{ durationLabel(row.durationMs) }}</span>
-        <span v-if="row.failed" class="text-orchid">gagal</span>
-        <span v-else-if="row.status === 'running'" class="text-quiet">berjalan</span>
+        <span class="min-w-0 flex-1 truncate" :class="row.failed ? '' : 'text-muted'">
+          {{ row.label }}
+          <span
+            v-if="row.kind === 'thinking' && row.detail"
+            class="text-quiet"
+          >
+            · {{ row.detail.length > 80 ? `${row.detail.slice(0, 80)}…` : row.detail }}
+          </span>
+          <span v-else-if="row.failed && row.detail" class="text-red-300/80"> · {{ row.detail }}</span>
+        </span>
+        <span class="shrink-0 tabular-nums text-quiet">
+          {{ usesSteps ? compactDuration(row.durationMs) : durationLabel(row.durationMs) }}
+        </span>
+        <span v-if="row.failed" class="shrink-0 text-red-300">gagal</span>
+        <span v-else-if="row.status === 'running'" class="shrink-0 text-quiet">berjalan</span>
       </li>
     </ol>
   </details>

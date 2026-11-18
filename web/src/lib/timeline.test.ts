@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest'
 import {
   approvalCountdown,
   approvalSeconds,
+  compactDuration,
   countdownLabel,
   countdownSeconds,
   durationLabel,
+  isStalled,
   needsStopConfirm,
+  progressHeading,
   roomState,
   statusKind,
   timelineRows,
@@ -30,6 +33,53 @@ describe('run timeline', () => {
     expect(timelineRows(undefined)).toEqual([])
     expect(timelineRows({})).toEqual([])
     expect(timelineRows({ tools: [] })).toEqual([])
+  })
+
+  it('prefers the persisted steps, in seq order and exactly once', () => {
+    const rows = timelineRows({
+      steps: [
+        {
+          seq: 2,
+          kind: 'thinking',
+          name: 'berpikir',
+          detail: 'Saya memeriksa berkasnya dulu',
+          status: 'ok',
+          startedAt: '2026-11-19T10:00:01Z',
+          durationMs: 1200,
+        },
+        {
+          seq: 1,
+          kind: 'tool',
+          name: 'terminal',
+          detail: 'printf x',
+          status: 'failed',
+          startedAt: '2026-11-19T10:00:00Z',
+          durationMs: 750,
+        },
+      ],
+      // A legacy tool list must not duplicate the steps.
+      tools: [{ name: 'terminal', durationMs: 750, status: 'failed' }],
+    })
+    expect(rows.map((row) => row.key)).toEqual(['step-1', 'step-2'])
+    expect(rows[0].failed).toBe(true)
+    expect(rows[1].kind).toBe('thinking')
+    expect(rows[1].label).toBe('berpikir')
+  })
+
+  it('switches from working to waiting only after 20 s of silence', () => {
+    expect(progressHeading(0, '0:42', false)).toBe('Hermes bekerja · 0:42')
+    expect(progressHeading(19_999, '0:42', false)).toBe('Hermes bekerja · 0:42')
+    expect(progressHeading(20_000, '0:42', false)).toBe('menunggu Hermes… 20s')
+    expect(progressHeading(125_000, '2:05', true)).toBe('menyambung ulang… 2:05')
+    expect(isStalled(119_999)).toBe(false)
+    expect(isStalled(120_000)).toBe(true)
+  })
+
+  it('keeps numeric durations compact in the panel', () => {
+    expect(compactDuration(0)).toBe('')
+    expect(compactDuration(750)).toBe('750ms')
+    expect(compactDuration(12_400)).toBe('12.4s')
+    expect(compactDuration(90_000)).toBe('1m 30s')
   })
 
   it('formats a duration honestly', () => {

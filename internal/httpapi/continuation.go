@@ -266,7 +266,7 @@ func (s *Server) processContinuation(ctx context.Context, row store.Continuation
 	))
 
 	// A continuation is a real turn too: a phone may attach mid-follow-up.
-	s.hub.Reset(room.ID)
+	s.hub.BeginTurn(room.ID)
 	streaming, startErr := s.startAssistant(ctx, room)
 	if startErr != nil {
 		s.logger.Error("cannot start continuation message", "error", startErr, "room_id", room.ID.String())
@@ -332,6 +332,7 @@ func (s *Server) processContinuation(ctx context.Context, row store.Continuation
 			"continuation_id", row.ID.String(),
 			"reason", current.Reason,
 		)
+		s.hub.Reset(room.ID)
 		return
 	}
 

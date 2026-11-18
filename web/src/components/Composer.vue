@@ -26,6 +26,8 @@ const props = defineProps<{
   canStop: boolean
   stopping: boolean
   stopArmed: boolean
+  /** The turn has been silent for two minutes; stopping is still the owner's decision. */
+  stalled: boolean
 }>()
 
 const emit = defineEmits<{
@@ -353,6 +355,13 @@ onMounted(autosize)
           </div>
 
           <div class="ml-auto flex shrink-0 items-center gap-1.5">
+            <span
+              v-if="stalled && canStop && !stopArmed"
+              class="max-w-[7.5rem] truncate text-[10.5px] text-quiet"
+              data-testid="stalled-hint"
+            >
+              kamu bisa hentikan
+            </span>
             <template v-if="stopArmed">
               <span class="text-[11.5px] text-muted">Hentikan sekarang?</span>
               <button

@@ -62,11 +62,26 @@ export interface ToolActivity {
   status: string
 }
 
+/** One visible working step, exactly as irisd recorded it. */
+export interface ProgressStep {
+  seq: number
+  kind: 'thinking' | 'tool' | 'plan' | 'status'
+  name?: string
+  detail?: string
+  status: 'running' | 'ok' | 'failed'
+  startedAt: string
+  endedAt?: string
+  durationMs: number
+}
+
 /** What a turn left behind, read from the stream, never invented. */
 export interface MessageMeta {
   procs?: string[]
   tools?: ToolActivity[]
+  steps?: ProgressStep[]
   statusLine?: string
+  /** Private working text. Never rendered as the reply body. */
+  reasoning?: string
   /** True when a retry replaced this reply. It stays visible, dimmed. */
   superseded?: boolean
 }

@@ -129,6 +129,9 @@ type Server struct {
 	// written to Postgres. Both are seams for tests.
 	partialInterval time.Duration
 	partialChars    int
+	// activityInterval is how often a live room reports the age of the last
+	// real event. A seam for tests, 5 s in production.
+	activityInterval time.Duration
 
 	schemaVersion    string
 	push             PushNotifier
@@ -167,6 +170,7 @@ type Options struct {
 	DailyBudgetUSD       float64
 	PartialInterval      time.Duration
 	PartialChars         int
+	ActivityInterval     time.Duration
 }
 
 // New builds the Echo application with all routes registered.
@@ -215,6 +219,10 @@ func New(opts Options) *echo.Echo {
 	s.partialChars = opts.PartialChars
 	if s.partialChars == 0 {
 		s.partialChars = 400
+	}
+	s.activityInterval = opts.ActivityInterval
+	if s.activityInterval <= 0 {
+		s.activityInterval = 5 * time.Second
 	}
 
 	// A row still marked streaming can only be the remains of a process that

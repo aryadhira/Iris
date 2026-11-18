@@ -1,9 +1,12 @@
-import type { MessageMeta, ToolActivity } from './types'
+import type { MessageMeta, ProgressStep, ToolActivity } from './types'
 import { humanToolName } from './format'
 
 export interface TimelineRow {
+  key: string
+  kind: 'thinking' | 'tool' | 'plan' | 'status'
   name: string
   label: string
+  detail: string
   durationMs: number
   status: string
   failed: boolean
@@ -12,18 +15,71 @@ export interface TimelineRow {
 /**
  * The timeline is exactly what the server recorded. It keeps the stored order
  * (oldest first, newest last) and never synthesises a row for an empty turn.
+ * New rows carry steps; an older message without steps still reads its tools.
  */
 export function timelineRows(meta?: MessageMeta): TimelineRow[] {
+  const steps = meta?.steps ?? []
+  if (steps.length > 0) {
+    return steps
+      .slice()
+      .sort((a, b) => a.seq - b.seq)
+      .map((step) => stepRow(step))
+  }
   const tools = meta?.tools ?? []
   return tools
     .filter((tool: ToolActivity) => tool.name.trim() !== '')
-    .map((tool) => ({
+    .map((tool, index) => ({
+      key: `tool-${index}`,
+      kind: 'tool' as const,
       name: tool.name,
       label: humanToolName(tool.name),
+      detail: '',
       durationMs: Math.max(0, tool.durationMs || 0),
       status: tool.status,
       failed: tool.status === 'failed' || tool.status === 'error',
     }))
+}
+
+export function stepRow(step: ProgressStep): TimelineRow {
+  return {
+    key: `step-${step.seq}`,
+    kind: step.kind,
+    name: step.name ?? '',
+    label: stepLabel(step),
+    detail: step.detail ?? '',
+    durationMs: Math.max(0, step.durationMs || 0),
+    status: step.status,
+    failed: step.status === 'failed',
+  }
+}
+
+export function stepLabel(step: ProgressStep): string {
+  if (step.kind === 'thinking') return 'berpikir'
+  if (step.kind === 'plan') return step.name?.trim() || 'rencana'
+  if (step.kind === 'status') return step.name?.trim() || 'menunggu'
+  return humanToolName(step.name ?? '')
+}
+
+/** Panel heading: work, waiting, or a reconnecting socket. */
+export function progressHeading(idleMs: number, elapsed: string, reconnecting: boolean): string {
+  if (reconnecting) return `menyambung ulang… ${elapsed}`
+  if (idleMs >= 20_000) return `menunggu Hermes… ${Math.floor(idleMs / 1000)}s`
+  return `Hermes bekerja · ${elapsed}`
+}
+
+/** After two silent minutes the owner is offered the stop button. */
+export function isStalled(idleMs: number): boolean {
+  return idleMs >= 120_000
+}
+
+/** The panel's compact unit: 12.4s, not a sentence. */
+export function compactDuration(ms: number): string {
+  if (!ms || ms <= 0) return ''
+  if (ms < 1000) return `${Math.round(ms)}ms`
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
+  const minutes = Math.floor(ms / 60_000)
+  const seconds = Math.round((ms % 60_000) / 1000)
+  return `${minutes}m ${String(seconds).padStart(2, '0')}s`
 }
 
 export function durationLabel(ms: number): string {

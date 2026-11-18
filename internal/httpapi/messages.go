@@ -244,7 +244,7 @@ func (s *Server) streamTurn(
 
 	// This response is now just another room subscriber. The same frames go to
 	// every phone/laptop attached to /events, so no browser owns the rendering.
-	s.hub.Reset(room.ID)
+	s.hub.BeginTurn(room.ID)
 	_, events, unsubscribe := s.hub.Subscribe(room.ID)
 	pumpDone := make(chan struct{})
 	go func() {

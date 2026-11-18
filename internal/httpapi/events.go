@@ -14,6 +14,7 @@ import (
 
 	"github.com/aryadhira/iris/internal/live"
 	"github.com/aryadhira/iris/internal/store"
+	"github.com/aryadhira/iris/internal/turntrace"
 )
 
 const (
@@ -27,15 +28,19 @@ const (
 // built after subscribing, so the in-memory partial is exactly the text before
 // the first delta this subscriber will see.
 type roomSnapshot struct {
-	Run          *runView       `json:"run"`
-	Partial      string         `json:"partial"`
-	Approvals    []approvalView `json:"approvals"`
-	RemindersDue int            `json:"reminders_due"`
+	Run          *runView         `json:"run"`
+	Partial      string           `json:"partial"`
+	Approvals    []approvalView   `json:"approvals"`
+	RemindersDue int              `json:"reminders_due"`
+	Steps        []turntrace.Step `json:"steps"`
+	// LastEventAgeMs is how long the live turn had been silent when this
+	// snapshot was assembled. A late joiner starts its waiting clock honestly.
+	LastEventAgeMs int64 `json:"last_event_age_ms"`
 }
 
-// roomEvents is the room's live stream: a snapshot, then deltas, tools,
-// approvals, notes and one done. It needs no replay log because the snapshot
-// carries the only state a late joiner needs.
+// roomEvents is the room's live stream: a snapshot, then deltas, steps, an
+// activity heartbeat, tools, approvals, notes and one done. It needs no replay
+// log because the snapshot carries the steps a late joiner needs.
 func (s *Server) roomEvents(c echo.Context) error {
 	id, err := roomID(c)
 	if err != nil {
@@ -111,20 +116,32 @@ func (s *Server) roomEvents(c echo.Context) error {
 	}
 
 	if !write("snapshot", roomSnapshot{
-		Run:          runViewOf(run),
-		Partial:      partial,
-		Approvals:    approvals,
-		RemindersDue: remindersDue,
+		Run:            runViewOf(run),
+		Partial:        partial,
+		Approvals:      approvals,
+		RemindersDue:   remindersDue,
+		Steps:          snapshot.Steps,
+		LastEventAgeMs: snapshot.LastEventAgeMs,
 	}) {
 		return nil
 	}
 
 	heartbeat := time.NewTicker(liveHeartbeat)
 	defer heartbeat.Stop()
+	// The activity frame is the panel's heartbeat: it carries the age of the
+	// last real event, so 20 s of silence can be shown without inventing work.
+	activity := time.NewTicker(s.activityInterval)
+	defer activity.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
+		case <-activity.C:
+			if lastAge, ok := s.hub.Activity(id); ok {
+				if !write("activity", map[string]any{"ageMs": lastAge.Milliseconds()}) {
+					return nil
+				}
+			}
 		case <-heartbeat.C:
 			// A comment keeps phones and proxies from silently dropping an idle
 			// stream. It is not an event and never reaches the transcript.
@@ -197,6 +214,12 @@ func (s *Server) publishRoomEvent(roomID uuid.UUID, name string, payload any) {
 	if name == "delta" {
 		if text, ok := payload.(map[string]string); ok {
 			s.hub.Append(roomID, text["text"])
+			return
+		}
+	}
+	if name == "step" {
+		if step, ok := payload.(turntrace.Step); ok {
+			s.hub.PublishStep(roomID, step)
 			return
 		}
 	}

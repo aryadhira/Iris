@@ -19,11 +19,11 @@ import FileLibrary from '../components/FileLibrary.vue'
 import FormattedText from '../components/FormattedText.vue'
 import MessageBubble from '../components/MessageBubble.vue'
 import RoomInspector from '../components/RoomInspector.vue'
-import WorkingLine from '../components/WorkingLine.vue'
+import TurnProgress from '../components/TurnProgress.vue'
 import { ApiError, api } from '../lib/api'
 import { humanizeServerError } from '../lib/errors'
 import { downloadBlob } from '../lib/files'
-import { approvalSeconds, needsStopConfirm, roomState } from '../lib/timeline'
+import { approvalSeconds, isStalled, needsStopConfirm, roomState } from '../lib/timeline'
 import type { Approval, ChatMessage, Room, RoomRun, TurnPhase } from '../lib/types'
 import { createAttachmentStore, type AttachmentStore } from '../stores/attachments'
 import { createRoomStore, type RoomStore } from '../stores/room'
@@ -73,7 +73,7 @@ const nearBottom = ref(true)
 const messages = computed(() => store.value?.state.messages ?? [])
 const phase = computed<TurnPhase>(() => store.value?.state.phase ?? 'idle')
 const streamingText = computed(() => store.value?.state.streamingText ?? '')
-const currentTool = computed(() => store.value?.state.currentTool ?? '')
+const progressSteps = computed(() => store.value?.state.steps ?? [])
 const storeRun = computed<RoomRun | null>(() =>
   store.value ? store.value.state.run : (room.value?.run ?? null),
 )
@@ -102,6 +102,17 @@ const archived = computed(() => store.value?.state.archived ?? false)
 const isWorking = computed(
   () => phase.value === 'streaming' || phase.value === 'reconnecting' || runIsLive.value,
 )
+/**
+ * Silence is measured server-side from the last real event and continues to
+ * grow locally between activity frames. A heartbeat never resets it.
+ */
+const idleMs = computed(() => {
+  if (!isWorking.value) return 0
+  const base = store.value?.state.activityAgeMs ?? 0
+  const at = store.value?.state.activityAt ?? 0
+  const grown = at > 0 ? Math.max(0, clockNow.value - at) : 0
+  return base + grown
+})
 const draft = computed({
   get: () => store.value?.state.draft ?? '',
   set: (value: string) => {
@@ -893,12 +904,6 @@ onBeforeUnmount(() => {
                     aria-hidden="true"
                   />
                 </div>
-                <WorkingLine
-                  class="mt-2"
-                  :started-at="turnStartedAt"
-                  :tool="currentTool"
-                  :reconnecting="phase === 'reconnecting'"
-                />
               </div>
             </div>
 
@@ -942,6 +947,16 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </div>
+
+    <!-- The live working log sits between the transcript and the composer, not
+         inside the streaming bubble. It folds into the message when done. -->
+    <TurnProgress
+      v-if="isWorking"
+      :steps="progressSteps"
+      :started-at="turnStartedAt"
+      :idle-ms="idleMs"
+      :reconnecting="phase === 'reconnecting'"
+    />
 
     <!-- Error, with the typed message still in the composer for a retry. -->
     <div v-if="store && errorText" class="border-t border-line bg-bg px-3 pt-3 lg:px-8">
@@ -1028,6 +1043,7 @@ onBeforeUnmount(() => {
       :can-stop="canStop"
       :stopping="stopping"
       :stop-armed="stopArmed"
+      :stalled="isStalled(idleMs)"
       @send="send"
       @stop="requestStop"
       @stop-confirm="stopNow"

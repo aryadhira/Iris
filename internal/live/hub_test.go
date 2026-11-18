@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/aryadhira/iris/internal/turntrace"
 )
 
 func receive(t *testing.T, ch <-chan Event) Event {
@@ -131,6 +133,69 @@ func TestPublishDoesNotBlockWithNoReader(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
 		t.Fatalf("1000 publishes took %s; a dead reader stalled the turn", elapsed)
+	}
+}
+
+func TestStepsAreInTheSnapshotAndUpdateBySeq(t *testing.T) {
+	h := New()
+	room := uuid.New()
+	h.BeginTurn(room)
+
+	first := turntrace.Step{Seq: 1, Kind: turntrace.KindTool, Name: "terminal", Status: turntrace.StatusRunning, StartedAt: time.Now()}
+	h.PublishStep(room, first)
+	second := turntrace.Step{Seq: 2, Kind: turntrace.KindThinking, Name: "berpikir", Status: turntrace.StatusRunning, StartedAt: time.Now()}
+	h.PublishStep(room, second)
+
+	snap, ch, cancel := h.Subscribe(room)
+	defer cancel()
+	if len(snap.Steps) != 2 || snap.Steps[0].Name != "terminal" || snap.Steps[1].Kind != turntrace.KindThinking {
+		t.Fatalf("snapshot steps = %+v", snap.Steps)
+	}
+	if !snap.Active {
+		t.Fatal("snapshot does not report an active turn")
+	}
+
+	closed := first
+	closed.Status = turntrace.StatusOK
+	closed.DurationMs = 1250
+	now := time.Now()
+	closed.EndedAt = &now
+	h.PublishStep(room, closed)
+
+	ev := receive(t, ch)
+	if ev.Name != "step" {
+		t.Fatalf("event = %+v", ev)
+	}
+	if step := ev.Payload.(turntrace.Step); step.Seq != 1 || step.Status != turntrace.StatusOK {
+		t.Fatalf("updated step = %+v", step)
+	}
+	if _, _, ok := h.TurnState(room); !ok {
+		t.Fatal("turn state vanished")
+	}
+	h.Reset(room)
+	if steps, _, ok := h.TurnState(room); ok || len(steps) != 0 {
+		t.Fatalf("reset left an active turn with %d steps", len(steps))
+	}
+}
+
+func TestActivityIsAnAgeAndNeverResetsItself(t *testing.T) {
+	h := New()
+	room := uuid.New()
+	h.BeginTurn(room)
+	time.Sleep(15 * time.Millisecond)
+	age, ok := h.Activity(room)
+	if !ok || age < 10*time.Millisecond {
+		t.Fatalf("activity = %s, ok=%v", age, ok)
+	}
+	// Publishing the heartbeat frame must not make the room look fresh.
+	h.Publish(room, Event{Name: "activity", Payload: map[string]any{"ageMs": age.Milliseconds()}})
+	again, _ := h.Activity(room)
+	if again < age {
+		t.Fatalf("activity heartbeat reset the age: %s -> %s", age, again)
+	}
+	h.Reset(room)
+	if _, ok := h.Activity(room); ok {
+		t.Fatal("a finished turn still reports activity")
 	}
 }
 
