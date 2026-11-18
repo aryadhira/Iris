@@ -402,7 +402,7 @@ async function openRoom(id: string): Promise<void> {
     openError.value =
       error instanceof ApiError
         ? humanizeServerError(error.message)
-        : 'Iris tidak bisa membuka room ini. Periksa koneksi lalu coba lagi.'
+        : `Iris tidak bisa menghubungi ${location.host}. Periksa koneksi, atau buka alamat terbaru aplikasi ini.`
   }
 }
 
