@@ -375,3 +375,46 @@ func TestDownloadHeadersAndDeleteRemovesBytes(t *testing.T) {
 		t.Fatalf("library after delete = %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestAudioStreamsInlineButTheDownloadControlAsksForAnAttachment(t *testing.T) {
+	st := newFakeStore()
+	hm := &fakeHermes{createID: "api_audio"}
+	e := newTestApp(t, st, hm)
+	cookie := login(t, e)
+	room := createRoom(t, e, cookie, hm, st)
+
+	mp3 := append([]byte("ID3\x04\x00\x00\x00\x00\x00\x00"), make([]byte, 256)...)
+	file := decodeFile(t, upload(t, e, cookie, room.ID.String(), "lagu.mp3", mp3))
+	if file.Mime != "audio/mpeg" {
+		t.Fatalf("mp3 mime = %q", file.Mime)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/files/"+file.ID, nil)
+	req.Header.Set("Range", "bytes=0-15")
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusPartialContent {
+		t.Fatalf("range = %d, want 206 (%s)", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Disposition"); !strings.HasPrefix(got, "inline") {
+		t.Errorf("audio disposition = %q, want inline", got)
+	}
+	if got := rec.Header().Get("Accept-Ranges"); got != "bytes" {
+		t.Errorf("accept-ranges = %q", got)
+	}
+	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("nosniff = %q", got)
+	}
+
+	rec = request(t, e, http.MethodGet, "/api/files/"+file.ID+"?download=1", nil, cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("download = %d", rec.Code)
+	}
+	if got := rec.Header().Get("Content-Disposition"); !strings.HasPrefix(got, "attachment") {
+		t.Errorf("download disposition = %q, want attachment", got)
+	}
+	if !strings.Contains(rec.Header().Get("Content-Disposition"), "lagu.mp3") {
+		t.Errorf("download disposition must name the file: %q", rec.Header().Get("Content-Disposition"))
+	}
+}

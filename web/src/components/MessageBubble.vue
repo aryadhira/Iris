@@ -8,13 +8,23 @@ function humanSize(bytes?: number): string {
 import { computed, ref } from 'vue'
 import { PhDotsThreeVertical, PhDownloadSimple } from '@phosphor-icons/vue'
 import ArtifactCard from './ArtifactCard.vue'
+import AudioAttachment from './AudioAttachment.vue'
 import BrandMark from './BrandMark.vue'
 import FileIcon from './FileIcon.vue'
 import FileLightbox from './FileLightbox.vue'
 import FormattedText from './FormattedText.vue'
 import RunTimeline from './RunTimeline.vue'
 import SpeakerButton from './SpeakerButton.vue'
-import { fileKind, fileTypeLabel, fileUrl, formatBytes, isImage, isVideo } from '../lib/files'
+import {
+  fileDownloadUrl,
+  fileKind,
+  fileTypeLabel,
+  fileUrl,
+  formatBytes,
+  isAudio,
+  isImage,
+  isVideo,
+} from '../lib/files'
 import type { ChatMessage, FileAttachment } from '../lib/types'
 
 const props = withDefaults(
@@ -37,10 +47,17 @@ const superseded = computed(() => props.message.meta?.superseded === true)
 const attachments = computed(() => props.message.attachments ?? [])
 const images = computed(() => attachments.value.filter((file) => isImage(file)))
 const videos = computed(() => attachments.value.filter((file) => isVideo(file)))
+const audios = computed(() => attachments.value.filter((file) => isAudio(file)))
 const files = computed(() =>
-  attachments.value.filter((file) => !isImage(file) && !isVideo(file)),
+  attachments.value.filter((file) => !isImage(file) && !isVideo(file) && !isAudio(file)),
 )
 const artifacts = computed(() => (props.message.role === 'assistant' ? attachments.value : []))
+const artifactImages = computed(() => artifacts.value.filter((file) => isImage(file)))
+const artifactVideos = computed(() => artifacts.value.filter((file) => isVideo(file)))
+const artifactAudios = computed(() => artifacts.value.filter((file) => isAudio(file)))
+const artifactFiles = computed(() =>
+  artifacts.value.filter((file) => !isImage(file) && !isVideo(file) && !isAudio(file)),
+)
 const canSpeak = computed(
   () => props.message.role === 'assistant' && (!props.message.state || props.message.state === 'done') && !props.message.incomplete,
 )
@@ -109,6 +126,10 @@ const time = computed(() => {
               <span class="shrink-0 text-ink/50">{{ humanSize(video.size) }}</span>
             </figcaption>
           </figure>
+        </div>
+
+        <div v-if="audios.length > 0" class="flex flex-col gap-1.5 p-1.5">
+          <AudioAttachment v-for="audio in audios" :key="audio.id" :file="audio" />
         </div>
 
         <div
@@ -223,7 +244,88 @@ const time = computed(() => {
         />
       </div>
       <div v-if="artifacts.length > 0" class="mt-2 space-y-1.5" data-testid="artifact-list">
-        <ArtifactCard v-for="file in artifacts" :key="file.id" :file="file" />
+        <div
+          v-if="artifactImages.length > 0"
+          class="grid gap-1"
+          :class="artifactImages.length === 1 ? 'grid-cols-1' : 'grid-cols-2'"
+          data-testid="artifact-media"
+        >
+          <figure
+            v-for="image in artifactImages"
+            :key="image.id"
+            class="group relative overflow-hidden rounded-xl border border-line bg-bg-deep"
+          >
+            <button
+              type="button"
+              class="block w-full"
+              :aria-label="`Buka ${image.name}`"
+              data-testid="artifact-thumbnail"
+              @click="preview = image"
+            >
+              <img
+                :src="fileUrl(image.id)"
+                :alt="image.name"
+                loading="lazy"
+                class="max-h-52 w-full object-cover transition-opacity group-hover:opacity-90"
+              />
+            </button>
+            <span
+              class="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-gradient-to-t from-black/80 to-transparent px-2 pb-1.5 pt-6 text-[10.5px] text-ink/90"
+            >
+              <span class="truncate">{{ image.name }}</span>
+              <span class="shrink-0 text-ink/60">{{ humanSize(image.size) }}</span>
+            </span>
+            <a
+              :href="fileDownloadUrl(image.id)"
+              :download="image.name"
+              class="tap absolute right-1 top-1 flex items-center justify-center rounded-lg bg-bg-deep/80 text-ink/80 hover:text-ink"
+              :aria-label="`Unduh ${image.name}`"
+              data-testid="artifact-download"
+            >
+              <PhDownloadSimple :size="15" aria-hidden="true" />
+            </a>
+          </figure>
+        </div>
+
+        <div v-if="artifactVideos.length > 0" class="flex flex-col gap-1.5" data-testid="artifact-media">
+          <figure
+            v-for="video in artifactVideos"
+            :key="video.id"
+            class="overflow-hidden rounded-xl border border-line bg-bg-deep"
+          >
+            <!-- The wrapper owns the height, so the bubble does not jump when metadata lands. -->
+            <div class="flex aspect-video max-h-72 w-full items-center justify-center bg-black">
+              <video
+                :src="fileUrl(video.id)"
+                controls
+                playsinline
+                preload="metadata"
+                class="h-full w-full object-contain"
+                data-testid="artifact-video"
+              />
+            </div>
+            <figcaption class="flex items-center justify-between gap-2 px-2 py-1.5 text-[10.5px] text-ink/70">
+              <span class="min-w-0 flex-1 truncate" :title="video.name">
+                {{ video.name }} <span class="text-ink/50">· {{ humanSize(video.size) }}</span>
+              </span>
+              <a
+                :href="fileDownloadUrl(video.id)"
+                :download="video.name"
+                class="tap flex shrink-0 items-center justify-center rounded-lg text-quiet hover:text-ink"
+                :aria-label="`Unduh ${video.name}`"
+                data-testid="artifact-download"
+              >
+                <PhDownloadSimple :size="16" aria-hidden="true" />
+              </a>
+            </figcaption>
+          </figure>
+        </div>
+
+        <div v-if="artifactAudios.length > 0" class="flex flex-col gap-1.5" data-testid="artifact-media">
+          <AudioAttachment v-for="audio in artifactAudios" :key="audio.id" :file="audio" />
+        </div>
+
+        <ArtifactCard v-for="file in artifactFiles" :key="file.id" :file="file" />
       </div>
       <RunTimeline :meta="message.meta" :run-id="message.runId" />
       <p v-if="interrupted" class="mt-1.5 text-[12px] text-quiet">

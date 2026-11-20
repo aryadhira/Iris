@@ -1,6 +1,15 @@
 import type { FileAttachment } from './types'
 
-export type FileKind = 'image' | 'pdf' | 'doc' | 'sheet' | 'archive' | 'text' | 'other'
+export type FileKind =
+  | 'image'
+  | 'video'
+  | 'audio'
+  | 'pdf'
+  | 'doc'
+  | 'sheet'
+  | 'archive'
+  | 'text'
+  | 'other'
 
 /** Indonesian human size, matching the server's attachment line. */
 export function formatBytes(size: number): string {
@@ -16,12 +25,18 @@ export function formatBytes(size: number): string {
 
 export function fileKind(mime: string, name = ''): FileKind {
   if (mime.startsWith('image/')) return 'image'
+  if (mime.startsWith('video/')) return 'video'
+  if (mime.startsWith('audio/')) return 'audio'
   if (mime === 'application/pdf') return 'pdf'
   if (mime.includes('wordprocessingml')) return 'doc'
   if (mime.includes('spreadsheetml')) return 'sheet'
   if (mime === 'application/zip') return 'archive'
   if (mime.startsWith('text/') || mime === 'application/json') return 'text'
   const ext = name.toLowerCase().split('.').pop() ?? ''
+  if (['mp4', 'm4v', 'mov', 'webm', 'mkv', 'ogv'].includes(ext)) return 'video'
+  if (['mp3', 'm4a', 'm4b', 'ogg', 'oga', 'wav', 'flac', 'aac', 'opus', 'weba'].includes(ext)) {
+    return 'audio'
+  }
   if (['doc', 'docx', 'odt'].includes(ext)) return 'doc'
   if (['xls', 'xlsx', 'ods', 'csv'].includes(ext)) return 'sheet'
   if (['zip', 'tar', 'gz', 'rar', '7z'].includes(ext)) return 'archive'
@@ -29,10 +44,22 @@ export function fileKind(mime: string, name = ''): FileKind {
   return 'other'
 }
 
+/** The extension shown in a label, or a quiet fallback when the name has none. */
+function extensionLabel(name: string, fallback: string): string {
+  const trimmed = name.trim()
+  const dot = trimmed.lastIndexOf('.')
+  if (dot < 0 || dot === trimmed.length - 1) return fallback
+  return trimmed.slice(dot + 1).toUpperCase()
+}
+
 export function fileTypeLabel(mime: string, name = ''): string {
   switch (fileKind(mime, name)) {
     case 'image':
-      return (name.split('.').pop() ?? 'Gambar').toUpperCase()
+      return extensionLabel(name, 'Gambar')
+    case 'video':
+      return extensionLabel(name, 'Video')
+    case 'audio':
+      return extensionLabel(name, 'Audio')
     case 'pdf':
       return 'PDF'
     case 'doc':
@@ -44,12 +71,17 @@ export function fileTypeLabel(mime: string, name = ''): string {
     case 'text':
       return mime === 'application/json' ? 'JSON' : 'Teks'
     default:
-      return (name.split('.').pop() ?? 'Berkas').toUpperCase()
+      return extensionLabel(name, 'Berkas')
   }
 }
 
 export function fileUrl(id: string): string {
   return `/api/files/${encodeURIComponent(id)}`
+}
+
+/** The same file, explicitly asked for as a download even though it streams inline. */
+export function fileDownloadUrl(id: string): string {
+  return `${fileUrl(id)}?download=1`
 }
 
 export function isImage(file: Pick<FileAttachment, 'mime'>): boolean {
@@ -107,4 +139,14 @@ export function artifactCard(file: FileAttachment): ArtifactCardModel {
 /** Video attachments get a player instead of a file row: Hermes can watch a clip, and so can Boss. */
 export function isVideo(file: { mime: string }): boolean {
   return file.mime.startsWith('video/')
+}
+
+/** Sound gets a player too; a shared mp3 must not remain a download-only chip. */
+export function isAudio(file: { mime: string }): boolean {
+  return file.mime.startsWith('audio/')
+}
+
+/** Anything the room can play in place. */
+export function isMedia(file: { mime: string }): boolean {
+  return isImage(file) || isVideo(file) || isAudio(file)
 }

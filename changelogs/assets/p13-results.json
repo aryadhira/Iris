@@ -1,0 +1,285 @@
+{
+  "results": [
+    {
+      "scope": "390",
+      "name": "assistant message opened at 390x844",
+      "pass": true,
+      "detail": "",
+      "at": "2026-11-20T12:11:11.763Z"
+    },
+    {
+      "scope": "390",
+      "name": "assistant message has an <audio controls> player for the mp3",
+      "pass": true,
+      "detail": "{\"present\":true,\"preload\":\"metadata\",\"autoplay\":false,\"loop\":false,\"controls\":true,\"src\":\"/api/files/33333333-3333-4333-8333-333333333302\",\"box\":{\"width\":302,\"height\":54}}",
+      "at": "2026-11-20T12:11:11.766Z"
+    },
+    {
+      "scope": "390",
+      "name": "audio does not autoplay or loop and preloads metadata",
+      "pass": true,
+      "detail": "{\"present\":true,\"preload\":\"metadata\",\"autoplay\":false,\"loop\":false,\"controls\":true,\"src\":\"/api/files/33333333-3333-4333-8333-333333333302\",\"box\":{\"width\":302,\"height\":54}}",
+      "at": "2026-11-20T12:11:11.766Z"
+    },
+    {
+      "scope": "390",
+      "name": "assistant message has a <video controls> player for the mp4",
+      "pass": true,
+      "detail": "{\"present\":true,\"preload\":\"metadata\",\"playsinline\":true,\"autoplay\":false,\"loop\":false,\"controls\":true,\"src\":\"/api/files/33333333-3333-4333-8333-333333333303\",\"box\":{\"width\":318,\"height\":179}}",
+      "at": "2026-11-20T12:11:11.766Z"
+    },
+    {
+      "scope": "390",
+      "name": "video is inline, muted by policy (no autoplay), and preloads metadata",
+      "pass": true,
+      "detail": "{\"present\":true,\"preload\":\"metadata\",\"playsinline\":true,\"autoplay\":false,\"loop\":false,\"controls\":true,\"src\":\"/api/files/33333333-3333-4333-8333-333333333303\",\"box\":{\"width\":318,\"height\":179}}",
+      "at": "2026-11-20T12:11:11.766Z"
+    },
+    {
+      "scope": "390",
+      "name": "video height is capped around max-h-72",
+      "pass": true,
+      "detail": "{\"width\":318,\"height\":179}",
+      "at": "2026-11-20T12:11:11.766Z"
+    },
+    {
+      "scope": "390",
+      "name": "image artifact is a thumbnail button",
+      "pass": true,
+      "detail": "{\"tag\":\"BUTTON\",\"src\":\"/api/files/33333333-3333-4333-8333-333333333301\",\"box\":{\"width\":318,\"height\":179}}",
+      "at": "2026-11-20T12:11:11.766Z"
+    },
+    {
+      "scope": "390",
+      "name": "thumbnail loads the png from /api/files",
+      "pass": true,
+      "detail": "/api/files/33333333-3333-4333-8333-333333333301",
+      "at": "2026-11-20T12:11:11.766Z"
+    },
+    {
+      "scope": "390",
+      "name": "the pdf keeps the document artifact card",
+      "pass": true,
+      "detail": "{\"testid\":\"artifact-card\",\"href\":\"/api/files/33333333-3333-4333-8333-333333333304\",\"download\":\"catatan.pdf\"}",
+      "at": "2026-11-20T12:11:11.766Z"
+    },
+    {
+      "scope": "390",
+      "name": "audio download control points at the explicit attachment URL",
+      "pass": true,
+      "detail": "/api/files/33333333-3333-4333-8333-333333333302?download=1",
+      "at": "2026-11-20T12:11:11.766Z"
+    },
+    {
+      "scope": "390",
+      "name": "video download control points at the explicit attachment URL",
+      "pass": true,
+      "detail": "/api/files/33333333-3333-4333-8333-333333333303?download=1",
+      "at": "2026-11-20T12:11:11.766Z"
+    },
+    {
+      "scope": "390",
+      "name": "clicking the thumbnail opens the lightbox with the image",
+      "pass": true,
+      "detail": "{\"open\":true,\"kind\":\"image\",\"tag\":\"IMG\",\"src\":\"/api/files/33333333-3333-4333-8333-333333333301\",\"naturalWidth\":640,\"naturalHeight\":360}",
+      "at": "2026-11-20T12:11:11.901Z"
+    },
+    {
+      "scope": "390",
+      "name": "the lightbox image is a loaded png",
+      "pass": true,
+      "detail": "{\"open\":true,\"kind\":\"image\",\"tag\":\"IMG\",\"src\":\"/api/files/33333333-3333-4333-8333-333333333301\",\"naturalWidth\":640,\"naturalHeight\":360}",
+      "at": "2026-11-20T12:11:11.901Z"
+    },
+    {
+      "scope": "390",
+      "name": "Escape closes the lightbox",
+      "pass": true,
+      "detail": "",
+      "at": "2026-11-20T12:11:12.082Z"
+    },
+    {
+      "scope": "390",
+      "name": "backdrop click closes the lightbox",
+      "pass": true,
+      "detail": "",
+      "at": "2026-11-20T12:11:12.087Z"
+    },
+    {
+      "scope": "390",
+      "name": "audio download control keeps the download attribute",
+      "pass": true,
+      "detail": "lagu-uji.mp3",
+      "at": "2026-11-20T12:11:12.088Z"
+    },
+    {
+      "scope": "390",
+      "name": "clicking download saves the mp3",
+      "pass": true,
+      "detail": "{\"name\":\"lagu-uji.mp3\",\"size\":24808}",
+      "at": "2026-11-20T12:11:12.239Z"
+    },
+    {
+      "scope": "390",
+      "name": "the download URL answers Content-Disposition: attachment",
+      "pass": true,
+      "detail": "{\"status\":200,\"disposition\":\"attachment; filename=lagu-uji.mp3\",\"contentType\":\"audio/mpeg\",\"bytes\":24808}",
+      "at": "2026-11-20T12:11:12.250Z"
+    },
+    {
+      "scope": "390",
+      "name": "the download URL returns the whole file",
+      "pass": true,
+      "detail": "{\"headers\":{\"status\":200,\"disposition\":\"attachment; filename=lagu-uji.mp3\",\"contentType\":\"audio/mpeg\",\"bytes\":24808},\"file\":{\"name\":\"lagu-uji.mp3\",\"size\":24808}}",
+      "at": "2026-11-20T12:11:12.250Z"
+    },
+    {
+      "scope": "390",
+      "name": "mp3 Range request answers 206",
+      "pass": true,
+      "detail": "{\"status\":206,\"disposition\":\"inline; filename=lagu-uji.mp3\",\"acceptRanges\":\"bytes\",\"contentType\":\"audio/mpeg\",\"contentRange\":\"bytes 0-1023/24808\",\"bytes\":1024}",
+      "at": "2026-11-20T12:11:12.256Z"
+    },
+    {
+      "scope": "390",
+      "name": "mp3 Range request streams inline",
+      "pass": true,
+      "detail": "{\"status\":206,\"disposition\":\"inline; filename=lagu-uji.mp3\",\"acceptRanges\":\"bytes\",\"contentType\":\"audio/mpeg\",\"contentRange\":\"bytes 0-1023/24808\",\"bytes\":1024}",
+      "at": "2026-11-20T12:11:12.256Z"
+    },
+    {
+      "scope": "390",
+      "name": "mp3 Range request advertises Accept-Ranges: bytes",
+      "pass": true,
+      "detail": "{\"status\":206,\"disposition\":\"inline; filename=lagu-uji.mp3\",\"acceptRanges\":\"bytes\",\"contentType\":\"audio/mpeg\",\"contentRange\":\"bytes 0-1023/24808\",\"bytes\":1024}",
+      "at": "2026-11-20T12:11:12.256Z"
+    },
+    {
+      "scope": "390",
+      "name": "mp3 Range request returns exactly 1024 bytes",
+      "pass": true,
+      "detail": "{\"status\":206,\"disposition\":\"inline; filename=lagu-uji.mp3\",\"acceptRanges\":\"bytes\",\"contentType\":\"audio/mpeg\",\"contentRange\":\"bytes 0-1023/24808\",\"bytes\":1024}",
+      "at": "2026-11-20T12:11:12.256Z"
+    },
+    {
+      "scope": "390",
+      "name": "the room file panel has an audio player",
+      "pass": true,
+      "detail": "{\"controls\":true,\"preload\":\"metadata\",\"autoplay\":false,\"loop\":false}",
+      "at": "2026-11-20T12:11:12.275Z"
+    },
+    {
+      "scope": "390",
+      "name": "the room file panel has a video player",
+      "pass": true,
+      "detail": "{\"controls\":true,\"preload\":\"metadata\",\"playsinline\":true}",
+      "at": "2026-11-20T12:11:12.275Z"
+    },
+    {
+      "scope": "390",
+      "name": "the room file panel image opens the lightbox",
+      "pass": true,
+      "detail": "{\"src\":\"/api/files/33333333-3333-4333-8333-333333333301\"}",
+      "at": "2026-11-20T12:11:12.275Z"
+    },
+    {
+      "scope": "390",
+      "name": "delete and download controls survive in the file panel",
+      "pass": true,
+      "detail": "{\"audio\":{\"controls\":true,\"preload\":\"metadata\",\"autoplay\":false,\"loop\":false},\"video\":{\"controls\":true,\"preload\":\"metadata\",\"playsinline\":true},\"thumbnail\":{\"src\":\"/api/files/33333333-3333-4333-8333-333333333301\"},\"deleteButtons\":4,\"downloads\":[\"/api/files/33333333-3333-4333-8333-333333333304?download=1\",\"/api/files/33333333-3333-4333-8333-333333333303?download=1\",\"/api/files/33333333-3333-4333-8333-333333333302?download=1\",\"/api/files/33333333-3333-4333-8333-333333333301?download=1\"]}",
+      "at": "2026-11-20T12:11:12.275Z"
+    },
+    {
+      "scope": "1440",
+      "name": "assistant message has an <audio controls> player for the mp3",
+      "pass": true,
+      "detail": "{\"present\":true,\"preload\":\"metadata\",\"autoplay\":false,\"loop\":false,\"controls\":true,\"src\":\"/api/files/33333333-3333-4333-8333-333333333302\",\"box\":{\"width\":648,\"height\":54}}",
+      "at": "2026-11-20T12:11:12.772Z"
+    },
+    {
+      "scope": "1440",
+      "name": "audio does not autoplay or loop and preloads metadata",
+      "pass": true,
+      "detail": "{\"present\":true,\"preload\":\"metadata\",\"autoplay\":false,\"loop\":false,\"controls\":true,\"src\":\"/api/files/33333333-3333-4333-8333-333333333302\",\"box\":{\"width\":648,\"height\":54}}",
+      "at": "2026-11-20T12:11:12.773Z"
+    },
+    {
+      "scope": "1440",
+      "name": "assistant message has a <video controls> player for the mp4",
+      "pass": true,
+      "detail": "{\"present\":true,\"preload\":\"metadata\",\"playsinline\":true,\"autoplay\":false,\"loop\":false,\"controls\":true,\"src\":\"/api/files/33333333-3333-4333-8333-333333333303\",\"box\":{\"width\":664,\"height\":288}}",
+      "at": "2026-11-20T12:11:12.773Z"
+    },
+    {
+      "scope": "1440",
+      "name": "video is inline, muted by policy (no autoplay), and preloads metadata",
+      "pass": true,
+      "detail": "{\"present\":true,\"preload\":\"metadata\",\"playsinline\":true,\"autoplay\":false,\"loop\":false,\"controls\":true,\"src\":\"/api/files/33333333-3333-4333-8333-333333333303\",\"box\":{\"width\":664,\"height\":288}}",
+      "at": "2026-11-20T12:11:12.773Z"
+    },
+    {
+      "scope": "1440",
+      "name": "video height is capped around max-h-72",
+      "pass": true,
+      "detail": "{\"width\":664,\"height\":288}",
+      "at": "2026-11-20T12:11:12.773Z"
+    },
+    {
+      "scope": "1440",
+      "name": "image artifact is a thumbnail button",
+      "pass": true,
+      "detail": "{\"tag\":\"BUTTON\",\"src\":\"/api/files/33333333-3333-4333-8333-333333333301\",\"box\":{\"width\":664,\"height\":208}}",
+      "at": "2026-11-20T12:11:12.773Z"
+    },
+    {
+      "scope": "1440",
+      "name": "thumbnail loads the png from /api/files",
+      "pass": true,
+      "detail": "/api/files/33333333-3333-4333-8333-333333333301",
+      "at": "2026-11-20T12:11:12.773Z"
+    },
+    {
+      "scope": "1440",
+      "name": "the pdf keeps the document artifact card",
+      "pass": true,
+      "detail": "{\"testid\":\"artifact-card\",\"href\":\"/api/files/33333333-3333-4333-8333-333333333304\",\"download\":\"catatan.pdf\"}",
+      "at": "2026-11-20T12:11:12.773Z"
+    },
+    {
+      "scope": "1440",
+      "name": "audio download control points at the explicit attachment URL",
+      "pass": true,
+      "detail": "/api/files/33333333-3333-4333-8333-333333333302?download=1",
+      "at": "2026-11-20T12:11:12.773Z"
+    },
+    {
+      "scope": "1440",
+      "name": "video download control points at the explicit attachment URL",
+      "pass": true,
+      "detail": "/api/files/33333333-3333-4333-8333-333333333303?download=1",
+      "at": "2026-11-20T12:11:12.773Z"
+    },
+    {
+      "scope": "1440",
+      "name": "clicking the thumbnail opens the lightbox with the image",
+      "pass": true,
+      "detail": "{\"open\":true,\"kind\":\"image\",\"tag\":\"IMG\",\"src\":\"/api/files/33333333-3333-4333-8333-333333333301\",\"naturalWidth\":640,\"naturalHeight\":360}",
+      "at": "2026-11-20T12:11:12.955Z"
+    },
+    {
+      "scope": "1440",
+      "name": "the lightbox image is a loaded png",
+      "pass": true,
+      "detail": "{\"open\":true,\"kind\":\"image\",\"tag\":\"IMG\",\"src\":\"/api/files/33333333-3333-4333-8333-333333333301\",\"naturalWidth\":640,\"naturalHeight\":360}",
+      "at": "2026-11-20T12:11:12.955Z"
+    },
+    {
+      "scope": "all",
+      "name": "no console errors or uncaught exceptions",
+      "pass": true,
+      "detail": "[]",
+      "at": "2026-11-20T12:11:13.095Z"
+    }
+  ],
+  "consoleErrors": []
+}

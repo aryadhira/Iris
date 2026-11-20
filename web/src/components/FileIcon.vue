@@ -2,10 +2,12 @@
 import { computed } from 'vue'
 import {
   PhFile,
+  PhFileAudio,
   PhFileDoc,
   PhFileImage,
   PhFilePdf,
   PhFileText,
+  PhFileVideo,
   PhFileXls,
   PhFileZip,
 } from '@phosphor-icons/vue'
@@ -15,6 +17,8 @@ const props = withDefaults(defineProps<{ kind: FileKind; size?: number }>(), { s
 
 const icons = {
   image: PhFileImage,
+  video: PhFileVideo,
+  audio: PhFileAudio,
   pdf: PhFilePdf,
   doc: PhFileDoc,
   sheet: PhFileXls,

@@ -120,6 +120,27 @@ The room contract is six lines of Indonesian stored on the room. Measured on v0.
 therefore sends the same text as per-turn `instructions`, which this build does apply; the session prompt
 is still stored for the record.
 
+## Media in the room
+
+A shared song or clip is a file, not a download-only attachment. `internal/files` sniffs the bytes
+before the allowlist: images, MP4/MOV/WebM, MP3 (ID3 or a raw MPEG frame), M4A (`M4A `/`M4B ` ftyp
+brands, never `video/mp4`), Ogg, WAV, FLAC, ADTS AAC, and WebM only when its name or codec markers say
+sound. Sound and video share the 64 MB media ceiling (`files.IsMedia`); documents stay at 25 MB.
+
+`GET /api/files/:id` uses `http.ServeContent`, so `Range` and `Accept-Ranges: bytes` work for players.
+`files.Inline` is true for `image/*`, `video/*`, `audio/*` and PDF: the browser streams the media instead
+of downloading it, and `Content-Disposition: inline; filename=...` still carries the name. Every media
+card keeps a download control on the same URL with `?download=1`, which deliberately switches the
+disposition to `attachment`; the document path is unchanged.
+
+In the transcript, assistant attachments are split by kind. Images become a thumbnail button that opens
+`FileLightbox`; video renders `<video controls playsinline preload="metadata">` capped at `max-h-72`;
+sound renders a compact `<audio controls preload="metadata">` row with no autoplay and no loop; anything
+else keeps `ArtifactCard`. The room file panel repeats the same players, keeps its download/delete
+controls, and opens images in the lightbox. The lightbox also handles video and audio, closes on Escape
+or a backdrop click, and pauses its video before disappearing. Containers own their height so a player
+mounting does not move the bubble, and no media starts by itself.
+
 ## Voice
 
 Push-to-talk → transcript → sent immediately. There is no editable draft: an empty transcript sends nothing and shows

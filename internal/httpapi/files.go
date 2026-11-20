@@ -25,11 +25,11 @@ import (
 
 const (
 	maxUploadBytes = 25 << 20
-	// A video is not a document. Keeping one ceiling for both meant a 26 MB clip was rejected while
-	// the product promises to send files to Hermes.
-	maxVideoBytes = 64 << 20
+	// Video and sound are not documents. Keeping one ceiling for everything meant a 26 MB clip
+	// was rejected while the product promises to send files to Hermes.
+	maxMediaBytes = 64 << 20
 	// The read loop has to accept up to the largest ceiling; the per-type limit is enforced after sniffing.
-	maxReadBytes = maxVideoBytes
+	maxReadBytes = maxMediaBytes
 )
 
 func (s *Server) listRoomFiles(c echo.Context) error {
@@ -135,7 +135,7 @@ func (s *Server) uploadFile(c echo.Context) error {
 		_ = os.Remove(tmp)
 		return c.JSON(http.StatusInternalServerError, errorBody("Iris tidak bisa menyimpan file itu. Coba lagi."))
 	}
-	if size > maxVideoBytes {
+	if size > maxMediaBytes {
 		_ = os.Remove(tmp)
 		return c.JSON(http.StatusRequestEntityTooLarge, errorBody(fmt.Sprintf("%s — batasnya 64 MB", files.FormatSize(size))))
 	}
@@ -149,8 +149,8 @@ func (s *Server) uploadFile(c echo.Context) error {
 		_ = os.Remove(tmp)
 		return c.JSON(http.StatusUnsupportedMediaType, errorBody("tipe file ini belum didukung"))
 	}
-	// The read loop accepts up to the video ceiling; a document must still respect 25 MB.
-	if size > maxUploadBytes && !files.IsVideo(mimeType) {
+	// The read loop accepts up to the media ceiling; a document must still respect 25 MB.
+	if size > maxUploadBytes && !files.IsMedia(mimeType) {
 		_ = os.Remove(tmp)
 		return c.JSON(http.StatusRequestEntityTooLarge, errorBody(fmt.Sprintf("%s — batasnya 25 MB", files.FormatSize(size))))
 	}
@@ -241,6 +241,11 @@ func (s *Server) downloadFile(c echo.Context) error {
 	disposition := "attachment"
 	if files.Inline(row.Mime) {
 		disposition = "inline"
+	}
+	// A media file streams inline, but its download control must still ask for
+	// an attachment. One URL, one explicit intent.
+	if c.QueryParam("download") != "" {
+		disposition = "attachment"
 	}
 	headers := c.Response().Header()
 	headers.Set(echo.HeaderContentType, row.Mime)

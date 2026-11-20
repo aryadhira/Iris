@@ -2,9 +2,10 @@
 import { onBeforeUnmount, ref, watch } from 'vue'
 import { PhDownloadSimple, PhTrash, PhX } from '@phosphor-icons/vue'
 import FileIcon from './FileIcon.vue'
+import FileLightbox from './FileLightbox.vue'
 import { api } from '../lib/api'
-import { fileKind, fileUrl, formatBytes } from '../lib/files'
-import type { RoomFile } from '../lib/types'
+import { fileDownloadUrl, fileKind, fileUrl, formatBytes, isAudio, isImage, isVideo } from '../lib/files'
+import type { FileAttachment, RoomFile } from '../lib/types'
 
 const props = defineProps<{ open: boolean; roomId: string }>()
 const emit = defineEmits<{ close: []; changed: [] }>()
@@ -15,6 +16,7 @@ const loaded = ref(false)
 const error = ref('')
 const confirmingId = ref<string | null>(null)
 const deletingId = ref<string | null>(null)
+const preview = ref<FileAttachment | null>(null)
 
 function restoreScroll(): void {
   document.body.style.overflow = ''
@@ -143,7 +145,25 @@ async function remove(file: RoomFile): Promise<void> {
                 class="rounded-xl border border-line bg-surface/60 px-3 py-2.5"
               >
                 <div class="flex min-w-0 items-center gap-3">
-                  <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-bg-deep text-muted">
+                  <button
+                    v-if="isImage(file)"
+                    type="button"
+                    class="h-11 w-11 shrink-0 overflow-hidden rounded-lg border border-line bg-bg-deep"
+                    :aria-label="`Buka ${file.name}`"
+                    data-testid="library-thumbnail"
+                    @click="preview = file"
+                  >
+                    <img
+                      :src="fileUrl(file.id)"
+                      :alt="file.name"
+                      loading="lazy"
+                      class="h-full w-full object-cover"
+                    />
+                  </button>
+                  <span
+                    v-else
+                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-bg-deep text-muted"
+                  >
                     <FileIcon :kind="fileKind(file.mime, file.name)" :size="18" />
                   </span>
                   <div class="min-w-0 flex-1">
@@ -156,7 +176,7 @@ async function remove(file: RoomFile): Promise<void> {
                     </p>
                   </div>
                   <a
-                    :href="fileUrl(file.id)"
+                    :href="fileDownloadUrl(file.id)"
                     :download="file.name"
                     class="tap flex items-center justify-center rounded-lg text-muted hover:text-ink"
                     :aria-label="`Unduh ${file.name}`"
@@ -173,6 +193,32 @@ async function remove(file: RoomFile): Promise<void> {
                   >
                     <PhTrash :size="16" />
                   </button>
+                </div>
+
+                <div
+                  v-if="isVideo(file)"
+                  class="mt-2 overflow-hidden rounded-lg border border-line bg-black"
+                >
+                  <video
+                    :src="fileUrl(file.id)"
+                    controls
+                    playsinline
+                    preload="metadata"
+                    class="aspect-video max-h-56 w-full object-contain"
+                    data-testid="library-video"
+                  />
+                </div>
+                <div
+                  v-else-if="isAudio(file)"
+                  class="mt-2 rounded-lg border border-line bg-bg-deep/60 px-2 py-1.5"
+                >
+                  <audio
+                    :src="fileUrl(file.id)"
+                    controls
+                    preload="metadata"
+                    class="block w-full [color-scheme:dark]"
+                    data-testid="library-audio"
+                  />
                 </div>
 
                 <div
@@ -216,4 +262,6 @@ async function remove(file: RoomFile): Promise<void> {
       </div>
     </Transition>
   </Teleport>
+
+  <FileLightbox :file="preview" @close="preview = null" />
 </template>

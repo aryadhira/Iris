@@ -160,3 +160,30 @@ than no guard, and a guard that inspects a running turn would kill work mid-flig
 the estimate an upper bound, and a turn with an unknown model contributes tokens but no dollars, so it
 cannot count toward the budget. Those gaps are visible in the API (`unknown_cost_turns`,
 `unreported_turns`, `cache_reported`) and in the changelog, not hidden behind a zero.
+
+## ADR-010 — Sound is allowed, streams inline, and stays downloadable
+
+**Status:** accepted (2026-11-20)
+
+**Context.** A user could upload an mp4 but not an mp3: the allowlist had no sound types, so a song was
+rejected as unsupported. Hermes artifacts bypassed the allowlist and were stored with their detected
+MIME, but `Inline()` was true only for images and PDF, so every shared song or clip was served as an
+attachment and could only be downloaded. The room already had a player for user videos and none for
+assistant media or sound.
+
+**Decision.**
+1. The upload allowlist gains `audio/mpeg`, `audio/mp4` (M4A brand), `audio/ogg`, `audio/wav`,
+   `audio/webm` (when the container or name says sound), `audio/flac` and `audio/aac`. Detection stays
+   byte-first; an M4A is never labelled `video/mp4`.
+2. Sound and video share one 64 MB media ceiling through `files.IsMedia`; `IsVideo` keeps working and
+   `IsAudio` is explicit. Documents keep 25 MB.
+3. `Inline()` is true for `video/*` and `audio/*`. Range requests keep working through
+   `http.ServeContent`, and `Content-Disposition` still names the file.
+4. A media card's download control uses the same `/api/files/:id` URL with `?download=1`, which forces
+   `attachment`. Streaming and downloading are two explicit intents, not a guess from the user agent.
+
+**Consequences.** Every shared sound and clip can play in the room and still be saved with its real
+name. WebM is ambiguous by design: without a reliable audio marker it stays `video/webm`, so a sound-only
+WebM with no `.weba` name and no early codec marker may render as a video element. The lightbox and the
+file panel depend on the same frontend classification, so a new MIME must be added in `sniff.go` and
+`web/src/lib/files.ts` together.

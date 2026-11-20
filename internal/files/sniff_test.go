@@ -174,3 +174,92 @@ func ftyp(brand string) []byte {
 	copy(head[8:12], brand)
 	return head
 }
+
+func TestDetectFileRecognisesSoundAndAcceptsIt(t *testing.T) {
+	wavHead := append([]byte("RIFF\x24\x00\x00\x00WAVEfmt "), make([]byte, 64)...)
+	cases := []struct {
+		name string
+		head []byte
+		want string
+	}{
+		{"lagu.mp3", []byte("ID3\x04\x00\x00\x00\x00\x00\x00"), MIMEMP3},
+		{"frame.mp3", []byte{0xFF, 0xFB, 0x90, 0x64, 0x00, 0x00}, MIMEMP3},
+		{"lagu.m4a", ftyp("M4A "), MIMEM4A},
+		{"lagu.m4a", ftyp("isom"), MIMEM4A},
+		{"suara.ogg", []byte("OggS\x00\x02\x00\x00"), MIMEOGG},
+		{"suara.wav", wavHead, MIMEWAV},
+		{"suara.flac", []byte("fLaC\x00\x00\x00\x22"), MIMEFLAC},
+		{"suara.aac", []byte{0xFF, 0xF1, 0x50, 0x80, 0x00, 0x1F, 0xFC}, MIMEAAC},
+		{"suara.weba", []byte{0x1A, 0x45, 0xDF, 0xA3, 0x01, 0x00, 0x00, 0x00}, MIMEAudioWebM},
+	}
+	for _, tc := range cases {
+		dir := t.TempDir()
+		path := filepath.Join(dir, tc.name)
+		body := append(tc.head, make([]byte, 200)...)
+		if err := os.WriteFile(path, body, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		got, err := DetectFile(path, tc.name)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if got != tc.want {
+			t.Fatalf("%s: got %s, want %s", tc.name, got, tc.want)
+		}
+		if !Allowed(got) {
+			t.Fatalf("%s: %s must be allowed", tc.name, got)
+		}
+		if !IsAudio(got) {
+			t.Fatalf("%s: %s must count as audio", tc.name, got)
+		}
+		if !IsMedia(got) {
+			t.Fatalf("%s: %s must use the media ceiling", tc.name, got)
+		}
+	}
+}
+
+func TestM4ABrandIsNotCalledVideo(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "lagu.m4a")
+	if err := os.WriteFile(path, append(ftyp("M4A "), make([]byte, 100)...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := DetectFile(path, "lagu.m4a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != MIMEM4A {
+		t.Fatalf("M4A brand = %q, want %q", got, MIMEM4A)
+	}
+	if IsVideo(got) {
+		t.Fatal("an M4A song must not be classified as video")
+	}
+}
+
+func TestMediaHelpersAndInlineRule(t *testing.T) {
+	for _, mimeType := range []string{MIMEMP3, MIMEM4A, MIMEOGG, MIMEWAV, MIMEAudioWebM, MIMEFLAC, MIMEAAC, MIMEMP4, MIMEMOV, MIMEWEBM} {
+		if !IsMedia(mimeType) {
+			t.Errorf("%s must use the media ceiling", mimeType)
+		}
+		if !Inline(mimeType) {
+			t.Errorf("%s must stream inline", mimeType)
+		}
+	}
+	for _, mimeType := range []string{MIMEPDF, MIMEPNG, MIMEText} {
+		if IsMedia(mimeType) {
+			t.Errorf("%s must not use the media ceiling", mimeType)
+		}
+	}
+	if !IsVideo(MIMEMP4) || IsVideo(MIMEMP3) {
+		t.Error("IsVideo must stay true for video and false for sound")
+	}
+	if !IsAudio(MIMEMP3) || IsAudio(MIMEMP4) {
+		t.Error("IsAudio must distinguish sound from video")
+	}
+	if !Inline(MIMEPNG) || !Inline(MIMEPDF) {
+		t.Error("the existing image/PDF inline rule must not regress")
+	}
+	if Inline(MIMEText) || Inline(MIMEZip) {
+		t.Error("documents must still download")
+	}
+}
