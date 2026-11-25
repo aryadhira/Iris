@@ -4,3 +4,6 @@ dist/
 *.log
 .env
 .DS_Store
+# database dumps contain personal room data — never track them
+backups/
+*.tar.gz
